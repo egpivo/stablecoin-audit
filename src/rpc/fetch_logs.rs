@@ -164,8 +164,13 @@ pub async fn run(
         println!("[{}] received {} raw logs", chain.to_uppercase(), raw_count);
 
         // Decode sample QA before dedup
-        let (qa_n, qa_fails, qa_errors) =
-            sample_decode_qa(&raw_logs, chain, config.decimals, QA_SAMPLE_SIZE);
+        let (qa_n, qa_fails, qa_errors) = sample_decode_qa(
+            &raw_logs,
+            chain,
+            &config.contract_address,
+            config.decimals,
+            QA_SAMPLE_SIZE,
+        );
         for e in &qa_errors {
             errors.push(format!("decode QA: {e}"));
         }
@@ -174,7 +179,7 @@ pub async fn run(
         let mut events = Vec::with_capacity(raw_count);
         let mut decode_errors = 0usize;
         for log in &raw_logs {
-            match decode_transfer_log(log, chain, config.decimals) {
+            match decode_transfer_log(log, chain, &config.contract_address, config.decimals) {
                 Ok(ev) => events.push(ev),
                 Err(e) => {
                     decode_errors += 1;

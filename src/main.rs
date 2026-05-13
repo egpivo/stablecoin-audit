@@ -40,6 +40,25 @@ struct Cli {
 
 #[derive(Subcommand)]
 enum Commands {
+    /// [experimental] Transfer-log audit: decode, dedup, supply reconciliation
+    #[cfg(feature = "experimental")]
+    TransferAudit {
+        /// Asset symbol (e.g. USDC)
+        #[arg(long, default_value = "USDC")]
+        asset: String,
+        /// Comma-separated chains (e.g. ethereum,base,arbitrum)
+        #[arg(long, value_delimiter = ',')]
+        chains: Vec<String>,
+        /// Start of block window
+        #[arg(long)]
+        from_block: u64,
+        /// End block height, or `latest`
+        #[arg(long)]
+        to_block: String,
+        /// Blocks per eth_getLogs request (default: 500)
+        #[arg(long)]
+        chunk_size: Option<u64>,
+    },
     /// Fetch and report token metadata and totalSupply for a block window
     Metadata {
         /// Asset symbol (e.g. USDC)
@@ -88,6 +107,45 @@ async fn main() -> Result<()> {
     dotenvy::dotenv().ok();
     let cli = Cli::parse();
     match cli.command {
+        #[cfg(feature = "experimental")]
+        Commands::TransferAudit {
+            asset,
+            chains,
+            from_block,
+            to_block,
+            chunk_size,
+        } => {
+            validate_identifier(&asset, "--asset")?;
+            for chain in &chains {
+                validate_identifier(chain, "--chains")?;
+            }
+            if from_block == 0 {
+                anyhow::bail!("--from-block 0 is not supported; use the contract deployment_block or later");
+            }
+            if let Some(cs) = chunk_size {
+                if cs == 0 {
+                    anyhow::bail!("--chunk-size must be at least 1");
+                }
+            }
+            let tb = to_block.trim();
+            if !tb.eq_ignore_ascii_case("latest") {
+                let b: u64 = tb.parse().map_err(|_| {
+                    anyhow::anyhow!(
+                        "--to-block must be a block number or 'latest'; got {:?}",
+                        to_block
+                    )
+                })?;
+                if b < from_block {
+                    anyhow::bail!("--to-block ({b}) must be >= --from-block ({from_block})");
+                }
+            }
+            let chains = if chains.is_empty() {
+                vec!["ethereum".into(), "base".into(), "arbitrum".into()]
+            } else {
+                chains
+            };
+            rpc::transfer_audit::run(&asset, &chains, from_block, tb, chunk_size).await?;
+        }
         Commands::Metadata {
             asset,
             chains,

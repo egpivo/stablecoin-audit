@@ -56,11 +56,14 @@ Top-level output written to `out/<asset>/metadata.json`.
 
 ## TransferEvent
 
-Written to `out/<asset>/transfers_<chain>.csv` by the `fetch` subcommand.
+Written by experimental transfer-log commands:
+- `fetch` -> `out/<asset>/transfers_<chain>.csv`
+- `transfer-audit` -> `out/<asset>/decoded_transfers.csv`
 
 | Field | Type | Description |
 |---|---|---|
 | `chain` | `String` | Chain name |
+| `contract_address` | `String` | Token contract address |
 | `block_number` | `u64` | Block containing the log |
 | `tx_hash` | `String` | Transaction hash |
 | `log_index` | `u64` | Log index within the block |
@@ -88,7 +91,7 @@ Written to `out/<asset>/control_events_<chain>.csv` by the `fetch` subcommand.
 
 ## QaReport
 
-Written to `out/<asset>/qa_report.json` by the `report` subcommand.
+Written to `out/<asset>/qa_report.json` by experimental report paths (`report` and `transfer-audit`).
 
 | Field | Type | Description |
 |---|---|---|
@@ -108,9 +111,9 @@ Each `QaChain` has a `gates` object with five string fields:
 
 Values are `PASS`, `FAIL`, `UNAVAILABLE`, or `WARN`. Gates are `UNAVAILABLE` for chains that hard-errored before evaluation (config/env/RPC errors).
 
-## SupplyInvariant
+## SupplyInvariant (experimental)
 
-Computed per chain per window during the `fetch` subcommand and stored in `fetch_report.json`.
+Computed per chain per window during `fetch` and `transfer-audit`.
 
 The core accounting identity:
 

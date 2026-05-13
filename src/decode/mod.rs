@@ -12,6 +12,7 @@ sol! {
 #[derive(Debug, Clone, Serialize)]
 pub struct TransferEvent {
     pub chain: String,
+    pub contract_address: String,
     pub block_number: u64,
     pub tx_hash: String,
     pub log_index: u64,
@@ -24,7 +25,12 @@ pub struct TransferEvent {
     pub value_u256: U256,         // raw value for arithmetic; not written to CSV
 }
 
-pub fn decode_transfer_log(log: &Log, chain: &str, decimals: u8) -> Result<TransferEvent> {
+pub fn decode_transfer_log(
+    log: &Log,
+    chain: &str,
+    contract_address: &str,
+    decimals: u8,
+) -> Result<TransferEvent> {
     let decoded = Transfer::decode_log(&log.inner, true).with_context(|| {
         format!(
             "decode Transfer log tx={} log_index={}",
@@ -51,6 +57,7 @@ pub fn decode_transfer_log(log: &Log, chain: &str, decimals: u8) -> Result<Trans
 
     Ok(TransferEvent {
         chain: chain.to_string(),
+        contract_address: contract_address.to_string(),
         block_number: log.block_number.unwrap_or(0),
         tx_hash: log
             .transaction_hash
@@ -77,15 +84,21 @@ fn format_token_amount(raw: U256, decimals: u8) -> String {
     format!("{}.{}", whole, frac_str)
 }
 
-/// Deduplicate logs by (tx_hash, log_index). Returns (deduped, duplicate_count).
+/// Deduplicate logs by (chain, contract_address, tx_hash, log_index).
+/// Returns (deduped, duplicate_count).
 pub fn dedup_transfer_events(events: Vec<TransferEvent>) -> (Vec<TransferEvent>, usize) {
     use std::collections::HashSet;
-    let mut seen: HashSet<(String, u64)> = HashSet::new();
+    let mut seen: HashSet<(String, String, String, u64)> = HashSet::new();
     let mut deduped = Vec::with_capacity(events.len());
     let mut dup_count = 0usize;
 
     for ev in events {
-        let key = (ev.tx_hash.clone(), ev.log_index);
+        let key = (
+            ev.chain.clone(),
+            ev.contract_address.clone(),
+            ev.tx_hash.clone(),
+            ev.log_index,
+        );
         if seen.insert(key) {
             deduped.push(ev);
         } else {
@@ -100,6 +113,7 @@ pub fn dedup_transfer_events(events: Vec<TransferEvent>) -> (Vec<TransferEvent>,
 pub fn sample_decode_qa(
     logs: &[Log],
     chain: &str,
+    contract_address: &str,
     decimals: u8,
     sample_size: usize,
 ) -> (usize, usize, Vec<String>) {
@@ -119,7 +133,7 @@ pub fn sample_decode_qa(
     let mut errors = Vec::new();
 
     for log in sample {
-        if let Err(e) = decode_transfer_log(log, chain, decimals) {
+        if let Err(e) = decode_transfer_log(log, chain, contract_address, decimals) {
             fail_count += 1;
             errors.push(format!("{e:#}"));
         }
@@ -134,8 +148,13 @@ mod tests {
     use alloy::primitives::U256;
 
     fn make_event(tx_hash: &str, log_index: u64) -> TransferEvent {
+        make_event_with_contract("0xcontract", tx_hash, log_index)
+    }
+
+    fn make_event_with_contract(contract: &str, tx_hash: &str, log_index: u64) -> TransferEvent {
         TransferEvent {
             chain: "ethereum".into(),
+            contract_address: contract.into(),
             block_number: 1,
             tx_hash: tx_hash.into(),
             log_index,
@@ -146,6 +165,17 @@ mod tests {
             kind: "mint".into(),
             value_u256: U256::from(1_000_000u64),
         }
+    }
+
+    #[test]
+    fn dedup_same_tx_same_log_index_distinct_contract_kept() {
+        let events = vec![
+            make_event_with_contract("0xc1", "0xaa", 0),
+            make_event_with_contract("0xc2", "0xaa", 0),
+        ];
+        let (deduped, dups) = dedup_transfer_events(events);
+        assert_eq!(deduped.len(), 2);
+        assert_eq!(dups, 0);
     }
 
     #[test]
@@ -182,7 +212,7 @@ mod tests {
     #[test]
     fn sample_qa_zero_sample_size_does_not_panic() {
         // Previously: logs.len() / 0 would panic when logs is non-empty.
-        let result = sample_decode_qa(&[], "ethereum", 6, 0);
+        let result = sample_decode_qa(&[], "ethereum", "0x0", 6, 0);
         assert_eq!(result, (0, 0, vec![]));
     }
 }

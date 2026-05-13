@@ -24,12 +24,13 @@
 - **Location**: `src/rpc/metadata.rs` and future `src/rpc/logs.rs`
 - The `sol!` macro generates typed call builders and return structs from Solidity interface definitions.
 - `U256` totals are converted to decimal strings via `report::format_token_amount`.
-- Future milestones will decode `Transfer` log topics and data, classifying each as mint / burn / transfer based on the zero address.
+- Milestone 0/1 default build does not run transfer-log decode.
+- Experimental build (`--features experimental`) includes transfer-log decode and classifies each event as mint / burn / transfer using the zero address.
 
 ## Layer 4 — Reconstruction
 
 - Not active in Milestone 1.
-- Planned: accumulate mints and burns over the block window, reconstruct the running supply, and compare against on-chain `totalSupply` snapshots.
+- Experimental `transfer-audit` performs window-scoped supply reconciliation (`net_mint` vs on-chain delta) but this remains outside Milestone 1 default scope.
 
 ## Layer 5 — QA Gates
 
@@ -45,7 +46,7 @@
 - JSON output written to `out/<asset>/metadata.json`.
 - `serde_json` with `preserve_order` feature keeps field order stable across runs.
 - Human-readable summary printed to stdout with comma-formatted token amounts.
-- Future milestones add CSV transfer logs and a cross-chain markdown summary.
+- Experimental commands additionally write transfer-audit outputs (`decoded_transfers.csv`, `supply_audit.csv`, `qa_report.json`, `supply_audit.md`).
 
 ## Layer 7 — Cross-chain Summary
 
