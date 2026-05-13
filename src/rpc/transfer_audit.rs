@@ -1,3 +1,5 @@
+//! Transfer-log audit: chunked `eth_getLogs`, decode, dedup, supply reconciliation.
+
 use alloy::primitives::{Address, I256, U256};
 use alloy::providers::Provider;
 use alloy::rpc::types::BlockId;
@@ -9,28 +11,14 @@ use std::collections::HashSet;
 use std::str::FromStr;
 
 use crate::config::load_single_token_config;
-use crate::decode::{decode_transfer_log, dedup_transfer_events};
-use crate::fetch::{fetch_transfer_logs_adaptive, ChunkingStats, FetchParams, TRANSFER_SIGNATURE_HASH};
-use crate::report::ensure_out_dir;
+use crate::decode::{decode_transfer_log, dedup_transfer_events, sample_decode_qa};
+use crate::fetch::{fetch_transfer_logs, FetchParams};
+use crate::report::{ensure_out_dir, format_token_amount};
 use crate::rpc::build_provider;
 
 const DEFAULT_CHUNK_SIZE: u64 = 500;
-const MIN_CHUNK_SIZE: u64 = 25;
-const MAX_RETRIES_PER_CHUNK: u32 = 3;
+const QA_SAMPLE_SIZE: usize = 100;
 const ZERO_ADDR: &str = "0x0000000000000000000000000000000000000000";
-
-#[derive(Debug, Clone, Copy, Serialize)]
-pub enum EndBlock {
-    Number(u64),
-    Latest,
-}
-
-#[derive(Debug, Clone, Serialize)]
-pub struct WindowSpec {
-    pub chain: String,
-    pub start_block: u64,
-    pub end_block: EndBlock,
-}
 
 sol! {
     #[sol(rpc)]
@@ -42,340 +30,397 @@ sol! {
     }
 }
 
-#[derive(Clone)]
-struct ChainRun {
+#[derive(Serialize)]
+struct QaReport {
+    asset: String,
+    generated_at: String,
+    provenance: ProvenanceBlock,
+    chains: Vec<QaChain>,
+}
+
+#[derive(Serialize)]
+struct ProvenanceBlock {
+    from_block: u64,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    to_block_requested: Option<String>,
+    generated_at: String,
+}
+
+#[derive(Serialize)]
+struct ProvenanceReport {
+    asset: String,
+    generated_at: String,
+    data_source: String,
+    simulated_data: bool,
+    chains: Vec<ProvenanceChain>,
+}
+
+#[derive(Serialize)]
+struct ProvenanceChain {
     chain: String,
     chain_id: u64,
     contract_address: String,
-    rpc_provider_alias: String,
-    start_block: u64,
-    end_block: Option<u64>,
-    transfer_count: usize,
-    active_senders: usize,
-    active_recipients: usize,
-    mint_count: usize,
-    burn_count: usize,
-    mint_sum_raw: String,
-    burn_sum_raw: String,
-    net_mint_raw: Option<String>,
-    total_supply_start_raw: Option<String>,
-    total_supply_end_raw: Option<String>,
-    total_supply_delta_raw: Option<String>,
-    discrepancy_raw: Option<String>,
-    metadata_calls_pass: bool,
-    historical_total_supply_pass: bool,
-    transfer_logs_fetched_pass: bool,
-    no_duplicate_logs_pass: Option<bool>,
-    transfer_decode_pass: Option<bool>,
-    supply_invariant_pass: Option<bool>,
-    provenance_stamped_pass: bool,
-    no_simulated_data_pass: bool,
+    from_block: u64,
+    resolved_to_block: Option<u64>,
+}
+
+#[derive(Serialize)]
+struct QaChain {
+    chain: String,
+    chain_id: u64,
+    contract_address: String,
+    from_block: u64,
+    resolved_to_block: Option<u64>,
+    gates: QaGates,
     duplicate_count: usize,
-    decode_error_count: usize,
-    chunking: ChunkingStats,
-    topics: Vec<String>,
-    data_source: String,
-    simulated_data: bool,
-    fetched_at: String,
-    generated_at: String,
+    full_decode_error_count: usize,
     errors: Vec<String>,
 }
 
 #[derive(Serialize)]
-struct SupplyAuditRow<'a> {
-    asset: &'a str,
-    chain: &'a str,
-    chain_id: u64,
-    contract_address: &'a str,
-    rpc_provider_alias: &'a str,
-    start_block: u64,
-    end_block: Option<u64>,
-    transfer_count: usize,
-    active_senders: usize,
-    active_recipients: usize,
-    mint_count: usize,
-    burn_count: usize,
-    mint_sum_raw: &'a str,
-    burn_sum_raw: &'a str,
-    net_mint_raw: Option<&'a str>,
-    total_supply_start_raw: Option<&'a str>,
-    total_supply_end_raw: Option<&'a str>,
-    total_supply_delta_raw: Option<&'a str>,
-    discrepancy_raw: Option<&'a str>,
-    qa_status: &'a str,
-    generated_at: &'a str,
-}
-
-#[derive(Serialize)]
-struct MintBurnSummaryRow<'a> {
-    asset: &'a str,
-    chain: &'a str,
-    start_block: u64,
-    end_block: Option<u64>,
-    mint_count: usize,
-    burn_count: usize,
-    mint_sum_raw: &'a str,
-    burn_sum_raw: &'a str,
-    net_mint_raw: Option<&'a str>,
-}
-
-#[derive(Serialize)]
-struct TransferSummaryRow<'a> {
-    asset: &'a str,
-    chain: &'a str,
-    start_block: u64,
-    end_block: Option<u64>,
-    transfer_count: usize,
-    active_senders: usize,
-    active_recipients: usize,
-}
-
-#[derive(Serialize)]
-struct QaReport<'a> {
-    asset: &'a str,
-    generated_at: &'a str,
-    chains: Vec<QaChain<'a>>,
-}
-
-#[derive(Serialize)]
-struct QaChain<'a> {
-    chain: &'a str,
-    chain_id: u64,
-    contract_address: &'a str,
-    rpc_provider_alias: &'a str,
-    start_block: u64,
-    end_block: Option<u64>,
-    gates: QaGates,
-    chunking: ChunkingStats,
-    duplicate_count: usize,
-    decode_error_count: usize,
-    errors: &'a [String],
-}
-
-#[derive(Serialize)]
 struct QaGates {
-    metadata_calls_pass: String,
-    historical_total_supply_calls_pass: String,
-    transfer_logs_fetched_pass: String,
+    metadata_call_pass: String,
+    historical_supply_pass: String,
     no_duplicate_logs_pass: String,
     transfer_decode_pass: String,
     supply_invariant_pass: String,
-    provenance_stamped_pass: String,
-    no_simulated_data_pass: String,
+    provenance_stamped: String,
 }
 
-#[derive(Serialize)]
-struct ProvenanceReport<'a> {
-    asset: &'a str,
-    generated_at: &'a str,
-    data_source: &'a str,
-    simulated_data: bool,
-    chains: Vec<ProvenanceRow<'a>>,
-}
-
-#[derive(Serialize)]
-struct ProvenanceRow<'a> {
-    asset: &'a str,
-    chain: &'a str,
+#[derive(Clone, Serialize)]
+struct SupplyAuditRow {
+    chain: String,
     chain_id: u64,
-    contract_address: &'a str,
-    rpc_provider_alias: &'a str,
-    start_block: u64,
-    end_block: Option<u64>,
-    fetched_at: &'a str,
-    generated_at: &'a str,
-    topics: &'a [String],
-    data_source: &'a str,
-    simulated_data: bool,
-    chunking: ChunkingStats,
+    contract_address: String,
+    from_block: u64,
+    resolved_to_block: Option<u64>,
+    to_block_requested: String,
+    chunk_size: u64,
+    transfer_event_count: usize,
+    active_senders: usize,
+    active_recipients: usize,
+    mint_count: usize,
+    burn_count: usize,
+    plain_transfer_count: usize,
+    sum_mints_raw: String,
+    sum_burns_raw: String,
+    net_mint_raw: Option<String>,
+    total_supply_at_start_minus_1: Option<String>,
+    total_supply_at_start_minus_1_provenance: String,
+    total_supply_at_end: Option<String>,
+    onchain_delta_raw: Option<String>,
+    discrepancy_raw: Option<String>,
+    metadata_call_pass: bool,
+    historical_supply_pass: bool,
+    no_duplicate_logs_pass: Option<bool>,
+    transfer_decode_pass: Option<bool>,
+    supply_invariant_pass: Option<bool>,
+    duplicate_count: usize,
+    full_decode_error_count: usize,
 }
 
-fn gate_bool(pass: bool) -> String {
-    if pass { "PASS".into() } else { "FAIL".into() }
+fn gate_csv(pass: bool) -> &'static str {
+    if pass {
+        "PASS"
+    } else {
+        "FAIL"
+    }
 }
 
-fn gate_opt(pass: Option<bool>) -> String {
+fn gate_opt_csv(pass: Option<bool>) -> &'static str {
     match pass {
-        Some(true) => "PASS".into(),
-        Some(false) => "FAIL".into(),
-        None => "UNAVAILABLE".into(),
-    }
-}
-
-fn qa_status(row: &ChainRun) -> &'static str {
-    if !row.metadata_calls_pass
-        || !row.historical_total_supply_pass
-        || !row.transfer_logs_fetched_pass
-        || !matches!(row.no_duplicate_logs_pass, Some(true))
-        || !matches!(row.transfer_decode_pass, Some(true))
-        || !row.provenance_stamped_pass
-        || !row.no_simulated_data_pass
-    {
-        return "FAIL";
-    }
-    match row.supply_invariant_pass {
         Some(true) => "PASS",
         Some(false) => "FAIL",
         None => "UNAVAILABLE",
     }
 }
 
-pub async fn run(asset: &str, windows: &[WindowSpec], chunk_size: Option<u64>) -> Result<()> {
-    if windows.is_empty() {
-        anyhow::bail!("at least one --window is required");
-    }
+pub async fn run(
+    asset: &str,
+    chains: &[String],
+    from_block: u64,
+    to_block_raw: &str,
+    chunk_size: Option<u64>,
+) -> Result<()> {
     let chunk_size = chunk_size.unwrap_or(DEFAULT_CHUNK_SIZE);
-    let generated_at = Utc::now().to_rfc3339();
-    let out_dir = ensure_out_dir(asset)?;
+    let to_block_requested = if to_block_raw.eq_ignore_ascii_case("latest") {
+        None
+    } else {
+        Some(to_block_raw.parse::<u64>().map_err(|_| {
+            anyhow::anyhow!(
+                "--to-block must be a positive integer or 'latest'; got {:?}",
+                to_block_raw
+            )
+        })?)
+    };
 
-    let mut all_events = Vec::new();
-    let mut runs = Vec::new();
+    let generated_at = Utc::now().to_rfc3339();
+    let mut all_events: Vec<crate::decode::TransferEvent> = Vec::new();
+    let mut supply_rows: Vec<SupplyAuditRow> = Vec::new();
+    let mut qa_chains: Vec<QaChain> = Vec::new();
     let mut any_hard_error = false;
 
-    for win in windows {
-        let (events, run, hard_error) = process_chain_window(asset, win, chunk_size, &generated_at).await;
-        if hard_error {
+    for chain in chains {
+        let (events, supply, qa, hard_err) = process_chain(
+            asset,
+            chain,
+            from_block,
+            to_block_requested,
+            chunk_size,
+            to_block_raw,
+            &generated_at,
+        )
+        .await;
+        if hard_err {
             any_hard_error = true;
         }
         all_events.extend(events);
-        runs.push(run);
+        qa_chains.push(qa);
+        supply_rows.push(supply);
     }
 
+    let out_dir = ensure_out_dir(asset)?;
     write_decoded_transfers_csv(&out_dir, &all_events)?;
-    write_supply_audit_csv(&out_dir, asset, &runs)?;
-    write_mint_burn_summary_csv(&out_dir, asset, &runs)?;
-    write_transfer_summary_csv(&out_dir, asset, &runs)?;
-    write_qa_report_json(&out_dir, asset, &generated_at, &runs)?;
-    write_provenance_json(&out_dir, asset, &generated_at, &runs)?;
-    write_summary_md(&out_dir, asset, &generated_at, &runs)?;
+    write_supply_audit_csv(&out_dir, &supply_rows)?;
 
-    println!("\nOutputs written under {}:", out_dir.display());
-    println!("  decoded_transfers.csv, supply_audit.csv, mint_burn_summary.csv");
-    println!("  transfer_summary.csv, qa_report.json, provenance.json, summary.md");
+    write_supply_audit_md(
+        &out_dir,
+        asset,
+        &generated_at,
+        from_block,
+        to_block_raw,
+        &supply_rows,
+        &qa_chains,
+    )?;
+
+    let provenance = ProvenanceBlock {
+        from_block,
+        to_block_requested: if to_block_raw.eq_ignore_ascii_case("latest") {
+            Some("latest".into())
+        } else {
+            Some(to_block_raw.to_string())
+        },
+        generated_at: generated_at.clone(),
+    };
+
+    let qa_report = QaReport {
+        asset: asset.to_uppercase(),
+        generated_at: generated_at.clone(),
+        provenance,
+        chains: qa_chains,
+    };
+    std::fs::write(
+        out_dir.join("qa_report.json"),
+        serde_json::to_string_pretty(&qa_report)?,
+    )?;
+    write_provenance_json(&out_dir, asset, &generated_at, &supply_rows)?;
+
+    println!(
+        "\nOutputs written under {}:",
+        out_dir.display()
+    );
+    println!("  decoded_transfers.csv, supply_audit.csv, qa_report.json, provenance.json, supply_audit.md");
 
     if any_hard_error {
-        anyhow::bail!("one or more chains had hard errors; partial outputs were written");
+        anyhow::bail!(
+            "one or more chains had hard errors; partial outputs written under {}",
+            out_dir.display()
+        );
     }
+
     Ok(())
 }
 
-async fn process_chain_window(
+async fn process_chain(
     asset: &str,
-    win: &WindowSpec,
+    chain: &str,
+    from_block: u64,
+    to_block: Option<u64>,
     chunk_size: u64,
+    to_block_raw: &str,
     generated_at: &str,
-) -> (Vec<crate::decode::TransferEvent>, ChainRun, bool) {
-    let chain = win.chain.as_str();
-    let mut errors = Vec::<String>::new();
+) -> (
+    Vec<crate::decode::TransferEvent>,
+    SupplyAuditRow,
+    QaChain,
+    bool,
+) {
     let mut hard_error = false;
-    let mut chunking = ChunkingStats {
-        initial_chunk: chunk_size,
-        final_chunk: chunk_size,
-        chunks_total: 0,
-        retries_total: 0,
-        backoffs_total: 0,
-    };
+    let empty_events = Vec::new();
 
     let config = match load_single_token_config(asset, chain) {
         Ok(c) => c,
         Err(e) => {
-            errors.push(format!("config: {e:#}"));
-            return (Vec::new(), failed_row(chain, win, generated_at, errors, chunking), true);
+            eprintln!("[{}] config load failed: {e:#}", chain.to_uppercase());
+            let supply = failed_supply_row(chain, from_block, to_block_raw, chunk_size);
+            let qa = build_qa_chain(&supply, generated_at, &[format!("config: {e:#}")]);
+            return (empty_events, supply, qa, true);
         }
     };
 
-    let rpc_provider_alias = config.rpc_url_env.clone();
     let rpc_url = match config.rpc_url() {
         Ok(u) => u,
         Err(e) => {
-            errors.push(format!("{e:#}"));
-            return (
-                Vec::new(),
-                failed_row_with_config(&config, win, generated_at, errors, chunking),
-                true,
-            );
-        }
-    };
-    let provider = match build_provider(&rpc_url) {
-        Ok(p) => p,
-        Err(e) => {
-            errors.push(format!("provider: {e:#}"));
-            return (
-                Vec::new(),
-                failed_row_with_config(&config, win, generated_at, errors, chunking),
-                true,
-            );
+            eprintln!("[{}] env var missing: {e:#}", chain.to_uppercase());
+            let supply = failed_supply_row(chain, from_block, to_block_raw, chunk_size);
+            let qa = build_qa_chain(&supply, generated_at, &[format!("{e:#}")]);
+            return (empty_events, supply, qa, true);
         }
     };
 
-    match provider.get_chain_id().await {
-        Ok(id) if id != config.chain_id => {
-            errors.push(format!("chain_id mismatch: rpc={id} config={}", config.chain_id));
-            hard_error = true;
-        }
+    let provider = match build_provider(&rpc_url) {
+        Ok(p) => p,
         Err(e) => {
-            errors.push(format!("eth_chainId failed: {e:#}"));
-            hard_error = true;
+            eprintln!("[{}] provider init failed: {e:#}", chain.to_uppercase());
+            let supply = failed_supply_row(chain, from_block, to_block_raw, chunk_size);
+            let qa = build_qa_chain(&supply, generated_at, &[format!("{e:#}")]);
+            return (empty_events, supply, qa, true);
         }
-        Ok(_) => {}
-    }
-    if hard_error {
-        return (
-            Vec::new(),
-            failed_row_with_config(&config, win, generated_at, errors, chunking),
-            true,
-        );
-    }
+    };
 
     let addr = match Address::from_str(&config.contract_address) {
         Ok(a) => a,
         Err(e) => {
-            errors.push(format!("contract address invalid: {e:#}"));
-            return (
-                Vec::new(),
-                failed_row_with_config(&config, win, generated_at, errors, chunking),
-                true,
-            );
+            eprintln!("[{}] bad contract address: {e:#}", chain.to_uppercase());
+            let supply = failed_supply_row(chain, from_block, to_block_raw, chunk_size);
+            let qa = build_qa_chain(&supply, generated_at, &[format!("contract_address: {e:#}")]);
+            return (empty_events, supply, qa, true);
         }
     };
 
-    let end_block = match win.end_block {
-        EndBlock::Number(n) => Some(n),
-        EndBlock::Latest => match provider.get_block_number().await {
-            Ok(n) => Some(n),
-            Err(e) => {
-                errors.push(format!("get_block_number failed: {e:#}"));
-                hard_error = true;
-                None
-            }
-        },
-    };
-    if end_block.is_none() {
-        return (
-            Vec::new(),
-            failed_row_with_config(&config, win, generated_at, errors, chunking),
-            true,
-        );
+    let mut errors: Vec<String> = Vec::new();
+    let mut skip_rpc = false;
+
+    match provider.get_chain_id().await {
+        Ok(id) if id != config.chain_id => {
+            let msg = format!(
+                "chain_id mismatch: RPC returned {id}, config expects {}; check {}",
+                config.chain_id, config.rpc_url_env
+            );
+            eprintln!("[{}] {msg}", chain.to_uppercase());
+            errors.push(msg);
+            skip_rpc = true;
+            hard_error = true;
+        }
+        Err(e) => {
+            let msg = format!("eth_chainId failed: {e:#}");
+            eprintln!("[{}] {msg}", chain.to_uppercase());
+            errors.push(msg);
+            skip_rpc = true;
+            hard_error = true;
+        }
+        Ok(_) => {}
     }
 
-    let contract = IERC20::new(addr, &provider);
-    let (name_ok, symbol_ok, decimals_val, live_supply_ok) = {
-        let name_ok = contract.name().call().await.is_ok();
-        let symbol_ok = contract.symbol().call().await.is_ok();
-        let decimals_val = contract.decimals().call().await.ok().map(|r| r._0);
-        let live_supply_ok = contract.totalSupply().call().await.is_ok();
-        (name_ok, symbol_ok, decimals_val, live_supply_ok)
+    let resolved_to_block: Option<u64> = if skip_rpc {
+        None
+    } else {
+        match to_block {
+            Some(b) => Some(b),
+            None => match provider.get_block_number().await {
+                Ok(n) => Some(n),
+                Err(e) => {
+                    let msg = format!("get_block_number failed: {e:#}");
+                    errors.push(msg.clone());
+                    eprintln!("[{}] {msg}", chain.to_uppercase());
+                    hard_error = true;
+                    None
+                }
+            },
+        }
     };
-    let metadata_calls_pass = name_ok && symbol_ok && decimals_val.is_some() && live_supply_ok;
-    let decimals = decimals_val.unwrap_or(config.decimals);
 
-    let start_minus_1 = win.start_block.saturating_sub(1);
-    let (supply_start, supply_start_raw) = if start_minus_1 == 0
-        || config
-            .deployment_block
-            .is_some_and(|d| start_minus_1 < d)
-    {
-        (Some(U256::ZERO), Some("0".to_string()))
+    let contract = IERC20::new(addr, &provider);
+
+    let (name_val, symbol_val, decimals_val, supply_live) = if skip_rpc {
+        (None, None, None, None)
+    } else {
+        let name_val = match contract.name().call().await {
+            Ok(r) => Some(r._0),
+            Err(e) => {
+                errors.push(format!("name(): {e:#}"));
+                None
+            }
+        };
+        let symbol_val = match contract.symbol().call().await {
+            Ok(r) => Some(r._0),
+            Err(e) => {
+                errors.push(format!("symbol(): {e:#}"));
+                None
+            }
+        };
+        let decimals_val = match contract.decimals().call().await {
+            Ok(r) => Some(r._0),
+            Err(e) => {
+                errors.push(format!("decimals(): {e:#}"));
+                None
+            }
+        };
+        let supply_live = match contract.totalSupply().call().await {
+            Ok(r) => Some(r._0),
+            Err(e) => {
+                errors.push(format!("totalSupply() live: {e:#}"));
+                None
+            }
+        };
+        (name_val, symbol_val, decimals_val, supply_live)
+    };
+
+    let metadata_call_pass = name_val.is_some()
+        && symbol_val.is_some()
+        && decimals_val.is_some()
+        && supply_live.is_some();
+
+    let effective_decimals = decimals_val.unwrap_or(config.decimals);
+    let decimals_for_decode = effective_decimals;
+
+    let Some(end_blk) = resolved_to_block else {
+        let supply = SupplyAuditRow {
+            chain: chain.to_string(),
+            chain_id: config.chain_id,
+            contract_address: config.contract_address.clone(),
+            from_block,
+            resolved_to_block: None,
+            to_block_requested: to_block_raw.to_string(),
+            chunk_size,
+            transfer_event_count: 0,
+            active_senders: 0,
+            active_recipients: 0,
+            mint_count: 0,
+            burn_count: 0,
+            plain_transfer_count: 0,
+            sum_mints_raw: "0".into(),
+            sum_burns_raw: "0".into(),
+            net_mint_raw: None,
+            total_supply_at_start_minus_1: None,
+            total_supply_at_start_minus_1_provenance: "skipped".into(),
+            total_supply_at_end: None,
+            onchain_delta_raw: None,
+            discrepancy_raw: None,
+            metadata_call_pass,
+            historical_supply_pass: false,
+            no_duplicate_logs_pass: None,
+            transfer_decode_pass: None,
+            supply_invariant_pass: None,
+            duplicate_count: 0,
+            full_decode_error_count: 0,
+        };
+        let qa = build_qa_chain(&supply, generated_at, &errors);
+        return (empty_events, supply, qa, hard_error);
+    };
+
+    // Historical totalSupply @ start-1 and end (aligned with metadata command).
+    let start_minus_1 = from_block.saturating_sub(1);
+    let (supply_start, supply_start_provenance): (Option<U256>, String) = if skip_rpc {
+        (None, "skipped".into())
+    } else if start_minus_1 == 0 {
+        (Some(U256::ZERO), "genesis (block 0)".into())
+    } else if config.deployment_block.is_some_and(|d| start_minus_1 < d) {
+        let deploy = config.deployment_block.unwrap();
+        (
+            Some(U256::ZERO),
+            format!("pre-deployment zero: block {start_minus_1} < deployment_block {deploy}"),
+        )
     } else {
         match contract
             .totalSupply()
@@ -383,225 +428,306 @@ async fn process_chain_window(
             .call()
             .await
         {
-            Ok(r) => (Some(r._0), Some(r._0.to_string())),
+            Ok(r) => (Some(r._0), "on-chain".into()),
             Err(e) => {
-                errors.push(format!("totalSupply(start-1) failed: {e:#}"));
-                (None, None)
+                errors.push(format!("totalSupply() at block {start_minus_1}: {e:#}"));
+                (None, "rpc-error".into())
             }
         }
     };
 
-    let supply_end = match end_block {
-        Some(end) => match contract.totalSupply().block(BlockId::number(end)).call().await {
+    let supply_end: Option<U256> = if skip_rpc {
+        None
+    } else {
+        match contract
+            .totalSupply()
+            .block(BlockId::number(end_blk))
+            .call()
+            .await
+        {
             Ok(r) => Some(r._0),
             Err(e) => {
-                errors.push(format!("totalSupply(end) failed: {e:#}"));
+                errors.push(format!("totalSupply() at block {end_blk}: {e:#}"));
                 None
             }
-        },
-        _ => None,
+        }
     };
-    let supply_end_raw = supply_end.map(|v| v.to_string());
-    let historical_total_supply_pass = supply_start.is_some() && supply_end.is_some();
 
-    let mut transfer_logs_fetched_pass = false;
-    let mut decoded = Vec::new();
-    let mut duplicate_count = 0usize;
-    let mut decode_error_count = 0usize;
-    let mut active_senders = 0usize;
-    let mut active_recipients = 0usize;
-    let mut mint_count = 0usize;
-    let mut burn_count = 0usize;
-    let mut mint_sum_raw = "0".to_string();
-    let mut burn_sum_raw = "0".to_string();
-    let mut net_mint_raw = None;
-    let mut total_supply_delta_raw = None;
-    let mut discrepancy_raw = None;
-    let mut no_duplicate_logs_pass = None;
-    let mut transfer_decode_pass = None;
-    let mut supply_invariant_pass = None;
-    let mut fetched_at = Utc::now().to_rfc3339();
+    let historical_supply_pass = supply_start.is_some() && supply_end.is_some();
 
-    if let Some(end) = end_block {
-        let params = FetchParams {
-            contract_address: addr,
-            from_block: win.start_block,
-            to_block: end,
-            chunk_size,
-        };
-        match fetch_transfer_logs_adaptive(&provider, &params, MIN_CHUNK_SIZE, MAX_RETRIES_PER_CHUNK).await {
-            Ok((raw_logs, stats)) => {
-                fetched_at = Utc::now().to_rfc3339();
-                chunking = stats;
-                transfer_logs_fetched_pass = true;
+    println!(
+        "[{}] fetching Transfer logs block {} → {} (chunk {})",
+        chain.to_uppercase(),
+        from_block,
+        end_blk,
+        chunk_size
+    );
 
-                let mut events = Vec::with_capacity(raw_logs.len());
-                for log in &raw_logs {
-                    match decode_transfer_log(log, chain, &config.contract_address, decimals) {
-                        Ok(ev) => events.push(ev),
-                        Err(e) => {
-                            decode_error_count += 1;
-                            if decode_error_count <= 5 {
-                                errors.push(format!("decode: {e:#}"));
-                            }
-                        }
-                    }
-                }
-                if decode_error_count > 5 {
-                    errors.push(format!("... and {} more decode errors", decode_error_count - 5));
-                }
+    let params = FetchParams {
+        contract_address: addr,
+        from_block,
+        to_block: end_blk,
+        chunk_size,
+    };
 
-                let (deduped, dups) = dedup_transfer_events(events);
-                duplicate_count = dups;
-                no_duplicate_logs_pass = Some(dups == 0);
-                transfer_decode_pass = Some(decode_error_count == 0);
+    let raw_logs = match fetch_transfer_logs(&provider, &params).await {
+        Ok(logs) => logs,
+        Err(e) => {
+            let msg = format!("eth_getLogs failed: {e:#}");
+            eprintln!("[{}] {msg}", chain.to_uppercase());
+            errors.push(msg);
+            let supply = SupplyAuditRow {
+                chain: chain.to_string(),
+                chain_id: config.chain_id,
+                contract_address: config.contract_address.clone(),
+                from_block,
+                resolved_to_block: Some(end_blk),
+                to_block_requested: to_block_raw.to_string(),
+                chunk_size,
+                transfer_event_count: 0,
+                active_senders: 0,
+                active_recipients: 0,
+                mint_count: 0,
+                burn_count: 0,
+                plain_transfer_count: 0,
+                sum_mints_raw: "0".into(),
+                sum_burns_raw: "0".into(),
+                net_mint_raw: None,
+                total_supply_at_start_minus_1: supply_start.map(|u| format_token_amount(u, effective_decimals)),
+                total_supply_at_start_minus_1_provenance: supply_start_provenance.clone(),
+                total_supply_at_end: supply_end.map(|u| format_token_amount(u, effective_decimals)),
+                onchain_delta_raw: None,
+                discrepancy_raw: None,
+                metadata_call_pass,
+                historical_supply_pass,
+                no_duplicate_logs_pass: None,
+                transfer_decode_pass: None,
+                supply_invariant_pass: None,
+                duplicate_count: 0,
+                full_decode_error_count: 0,
+            };
+            let qa = build_qa_chain(&supply, generated_at, &errors);
+            return (empty_events, supply, qa, true);
+        }
+    };
 
-                let mut senders = HashSet::new();
-                let mut recipients = HashSet::new();
-                let mut sum_mints = U256::ZERO;
-                let mut sum_burns = U256::ZERO;
-                for ev in &deduped {
-                    if ev.from != ZERO_ADDR {
-                        senders.insert(ev.from.clone());
-                    }
-                    if ev.to != ZERO_ADDR {
-                        recipients.insert(ev.to.clone());
-                    }
-                    if ev.kind == "mint" {
-                        mint_count += 1;
-                        sum_mints += ev.value_u256;
-                    } else if ev.kind == "burn" {
-                        burn_count += 1;
-                        sum_burns += ev.value_u256;
-                    }
-                }
-                active_senders = senders.len();
-                active_recipients = recipients.len();
-                mint_sum_raw = sum_mints.to_string();
-                burn_sum_raw = sum_burns.to_string();
-                decoded = deduped;
+    let raw_count = raw_logs.len();
+    println!("[{}] received {} raw logs", chain.to_uppercase(), raw_count);
 
-                if decode_error_count == 0 {
-                    if let (Some(start), Some(end_supply)) = (supply_start, supply_end) {
-                        let net_mint = I256::from_raw(sum_mints) - I256::from_raw(sum_burns);
-                        let delta = I256::from_raw(end_supply) - I256::from_raw(start);
-                        let discrepancy = net_mint - delta;
-                        net_mint_raw = Some(net_mint.to_string());
-                        total_supply_delta_raw = Some(delta.to_string());
-                        discrepancy_raw = Some(discrepancy.to_string());
-                        supply_invariant_pass = Some(discrepancy == I256::ZERO);
-                    }
-                }
-            }
+    let contract_str = config.contract_address.clone();
+    let (_qa_n, _qa_fails, qa_errors) = sample_decode_qa(
+        &raw_logs,
+        chain,
+        &contract_str,
+        decimals_for_decode,
+        QA_SAMPLE_SIZE,
+    );
+    for e in qa_errors {
+        errors.push(format!("decode QA: {e}"));
+    }
+
+    let mut events = Vec::with_capacity(raw_count);
+    let mut decode_errors = 0usize;
+    for log in &raw_logs {
+        match decode_transfer_log(log, chain, &contract_str, decimals_for_decode) {
+            Ok(ev) => events.push(ev),
             Err(e) => {
-                errors.push(format!("transfer logs fetch failed: {e:#}"));
-                hard_error = true;
+                decode_errors += 1;
+                if decode_errors <= 5 {
+                    errors.push(format!("decode: {e:#}"));
+                }
             }
         }
     }
+    if decode_errors > 5 {
+        errors.push(format!(
+            "... and {} more decode errors",
+            decode_errors - 5
+        ));
+    }
 
-    let provenance_stamped_pass = end_block.is_some()
-        && !rpc_provider_alias.is_empty()
-        && !generated_at.is_empty()
-        && !fetched_at.is_empty();
-    let no_simulated_data_pass = true;
-    let row = ChainRun {
+    let (deduped, dup_count) = dedup_transfer_events(events);
+
+    let mint_count = deduped.iter().filter(|e| e.kind == "mint").count();
+    let burn_count = deduped.iter().filter(|e| e.kind == "burn").count();
+    let plain_transfer_count = deduped.iter().filter(|e| e.kind == "transfer").count();
+
+    let mut senders: HashSet<String> = HashSet::new();
+    let mut recipients: HashSet<String> = HashSet::new();
+    for e in &deduped {
+        if e.from != ZERO_ADDR {
+            senders.insert(e.from.clone());
+        }
+        if e.to != ZERO_ADDR {
+            recipients.insert(e.to.clone());
+        }
+    }
+
+    let sum_mints: U256 = deduped
+        .iter()
+        .filter(|e| e.kind == "mint")
+        .fold(U256::ZERO, |acc, e| acc + e.value_u256);
+    let sum_burns: U256 = deduped
+        .iter()
+        .filter(|e| e.kind == "burn")
+        .fold(U256::ZERO, |acc, e| acc + e.value_u256);
+
+    let (net_mint_opt, onchain_delta_opt, discrepancy_opt, invariant_pass) =
+        if decode_errors > 0 {
+            (None, None, None, None)
+        } else {
+            match (supply_start, supply_end) {
+                (Some(start), Some(end)) => {
+                    let net_mint = I256::from_raw(sum_mints) - I256::from_raw(sum_burns);
+                    let onchain_delta = I256::from_raw(end) - I256::from_raw(start);
+                    let discrepancy = net_mint - onchain_delta;
+                    let pass = discrepancy == I256::ZERO;
+                    (Some(net_mint), Some(onchain_delta), Some(discrepancy), Some(pass))
+                }
+                _ => (None, None, None, None),
+            }
+        };
+
+    let no_dup_pass = dup_count == 0;
+    let all_decode_pass = decode_errors == 0;
+
+    let gate = |b: bool| if b { "[PASS]" } else { "[FAIL]" };
+    let inv_label = match invariant_pass {
+        Some(true) => "[PASS]",
+        Some(false) => "[FAIL]",
+        None => "[UNAVAILABLE]",
+    };
+    println!(
+        "[{}] {} logs → {} unique (dup: {}) | mint: {} burn: {} plain_transfer: {}",
+        chain.to_uppercase(),
+        raw_count,
+        deduped.len(),
+        dup_count,
+        mint_count,
+        burn_count,
+        plain_transfer_count,
+    );
+    println!(
+        "[{}] no_dup: {}  all_decode: {}  supply_invariant: {}",
+        chain.to_uppercase(),
+        gate(no_dup_pass),
+        gate(all_decode_pass),
+        inv_label,
+    );
+    if let (Some(nm), Some(od), Some(disc)) = (net_mint_opt, onchain_delta_opt, discrepancy_opt) {
+        println!(
+            "[{}]   net_mint={} onchain_delta={} discrepancy={}",
+            chain.to_uppercase(),
+            nm,
+            od,
+            disc,
+        );
+    }
+
+    let fmt_u256 = |v: U256| format_token_amount(v, effective_decimals);
+
+    let supply = SupplyAuditRow {
         chain: chain.to_string(),
         chain_id: config.chain_id,
         contract_address: config.contract_address.clone(),
-        rpc_provider_alias,
-        start_block: win.start_block,
-        end_block,
-        transfer_count: decoded.len(),
-        active_senders,
-        active_recipients,
+        from_block,
+        resolved_to_block: Some(end_blk),
+        to_block_requested: to_block_raw.to_string(),
+        chunk_size,
+        transfer_event_count: deduped.len(),
+        active_senders: senders.len(),
+        active_recipients: recipients.len(),
         mint_count,
         burn_count,
-        mint_sum_raw,
-        burn_sum_raw,
-        net_mint_raw,
-        total_supply_start_raw: supply_start_raw,
-        total_supply_end_raw: supply_end_raw,
-        total_supply_delta_raw,
-        discrepancy_raw,
-        metadata_calls_pass,
-        historical_total_supply_pass,
-        transfer_logs_fetched_pass,
-        no_duplicate_logs_pass,
-        transfer_decode_pass,
-        supply_invariant_pass,
-        provenance_stamped_pass,
-        no_simulated_data_pass,
-        duplicate_count,
-        decode_error_count,
-        chunking,
-        topics: vec![format!("{TRANSFER_SIGNATURE_HASH:#x}")],
-        data_source: "onchain_rpc".into(),
-        simulated_data: false,
-        fetched_at,
-        generated_at: generated_at.to_string(),
-        errors,
+        plain_transfer_count,
+        sum_mints_raw: sum_mints.to_string(),
+        sum_burns_raw: sum_burns.to_string(),
+        net_mint_raw: net_mint_opt.map(|v| v.to_string()),
+        total_supply_at_start_minus_1: supply_start.map(fmt_u256),
+        total_supply_at_start_minus_1_provenance: supply_start_provenance.clone(),
+        total_supply_at_end: supply_end.map(fmt_u256),
+        onchain_delta_raw: onchain_delta_opt.map(|v| v.to_string()),
+        discrepancy_raw: discrepancy_opt.map(|v| v.to_string()),
+        metadata_call_pass,
+        historical_supply_pass,
+        no_duplicate_logs_pass: Some(no_dup_pass),
+        transfer_decode_pass: Some(all_decode_pass),
+        supply_invariant_pass: invariant_pass,
+        duplicate_count: dup_count,
+        full_decode_error_count: decode_errors,
     };
 
-    (decoded, row, hard_error)
+    let qa = build_qa_chain(&supply, generated_at, &errors);
+
+    (deduped, supply, qa, hard_error)
 }
 
-fn failed_row(chain: &str, win: &WindowSpec, generated_at: &str, errors: Vec<String>, chunking: ChunkingStats) -> ChainRun {
-    ChainRun {
+fn failed_supply_row(
+    chain: &str,
+    from_block: u64,
+    to_block_raw: &str,
+    chunk_size: u64,
+) -> SupplyAuditRow {
+    SupplyAuditRow {
         chain: chain.to_string(),
         chain_id: 0,
         contract_address: "unknown".into(),
-        rpc_provider_alias: "unknown".into(),
-        start_block: win.start_block,
-        end_block: None,
-        transfer_count: 0,
+        from_block,
+        resolved_to_block: None,
+        to_block_requested: to_block_raw.to_string(),
+        chunk_size,
+        transfer_event_count: 0,
         active_senders: 0,
         active_recipients: 0,
         mint_count: 0,
         burn_count: 0,
-        mint_sum_raw: "0".into(),
-        burn_sum_raw: "0".into(),
+        plain_transfer_count: 0,
+        sum_mints_raw: "0".into(),
+        sum_burns_raw: "0".into(),
         net_mint_raw: None,
-        total_supply_start_raw: None,
-        total_supply_end_raw: None,
-        total_supply_delta_raw: None,
+        total_supply_at_start_minus_1: None,
+        total_supply_at_start_minus_1_provenance: "skipped".into(),
+        total_supply_at_end: None,
+        onchain_delta_raw: None,
         discrepancy_raw: None,
-        metadata_calls_pass: false,
-        historical_total_supply_pass: false,
-        transfer_logs_fetched_pass: false,
+        metadata_call_pass: false,
+        historical_supply_pass: false,
         no_duplicate_logs_pass: None,
         transfer_decode_pass: None,
         supply_invariant_pass: None,
-        provenance_stamped_pass: false,
-        no_simulated_data_pass: true,
         duplicate_count: 0,
-        decode_error_count: 0,
-        chunking,
-        topics: vec![format!("{TRANSFER_SIGNATURE_HASH:#x}")],
-        data_source: "onchain_rpc".into(),
-        simulated_data: false,
-        fetched_at: Utc::now().to_rfc3339(),
-        generated_at: generated_at.to_string(),
-        errors,
+        full_decode_error_count: 0,
     }
 }
 
-fn failed_row_with_config(
-    config: &crate::config::TokenConfig,
-    win: &WindowSpec,
-    generated_at: &str,
-    errors: Vec<String>,
-    chunking: ChunkingStats,
-) -> ChainRun {
-    let mut row = failed_row(&config.chain, win, generated_at, errors, chunking);
-    row.chain_id = config.chain_id;
-    row.contract_address = config.contract_address.clone();
-    row.rpc_provider_alias = config.rpc_url_env.clone();
-    row
+fn build_qa_chain(supply: &SupplyAuditRow, generated_at: &str, errors: &[String]) -> QaChain {
+    let prov = !supply.to_block_requested.is_empty() && supply.from_block > 0 && !generated_at.is_empty();
+    QaChain {
+        chain: supply.chain.clone(),
+        chain_id: supply.chain_id,
+        contract_address: supply.contract_address.clone(),
+        from_block: supply.from_block,
+        resolved_to_block: supply.resolved_to_block,
+        gates: QaGates {
+            metadata_call_pass: gate_csv(supply.metadata_call_pass).to_string(),
+            historical_supply_pass: gate_csv(supply.historical_supply_pass).to_string(),
+            no_duplicate_logs_pass: gate_opt_csv(supply.no_duplicate_logs_pass).to_string(),
+            transfer_decode_pass: gate_opt_csv(supply.transfer_decode_pass).to_string(),
+            supply_invariant_pass: gate_opt_csv(supply.supply_invariant_pass).to_string(),
+            provenance_stamped: gate_csv(prov).to_string(),
+        },
+        duplicate_count: supply.duplicate_count,
+        full_decode_error_count: supply.full_decode_error_count,
+        errors: errors.to_vec(),
+    }
 }
 
-fn write_decoded_transfers_csv(out_dir: &std::path::Path, events: &[crate::decode::TransferEvent]) -> Result<()> {
-    let mut wtr = csv::Writer::from_path(out_dir.join("decoded_transfers.csv"))?;
+fn write_decoded_transfers_csv(
+    out_dir: &std::path::Path,
+    events: &[crate::decode::TransferEvent],
+) -> Result<()> {
+    let path = out_dir.join("decoded_transfers.csv");
+    let mut wtr = csv::Writer::from_path(path)?;
     for ev in events {
         wtr.serialize(ev)?;
     }
@@ -609,133 +735,131 @@ fn write_decoded_transfers_csv(out_dir: &std::path::Path, events: &[crate::decod
     Ok(())
 }
 
-fn write_supply_audit_csv(out_dir: &std::path::Path, asset: &str, rows: &[ChainRun]) -> Result<()> {
-    let mut wtr = csv::Writer::from_path(out_dir.join("supply_audit.csv"))?;
+fn write_supply_audit_csv(out_dir: &std::path::Path, rows: &[SupplyAuditRow]) -> Result<()> {
+    let path = out_dir.join("supply_audit.csv");
+    let mut wtr = csv::Writer::from_path(path)?;
     for row in rows {
-        let rec = SupplyAuditRow {
-            asset,
-            chain: &row.chain,
-            chain_id: row.chain_id,
-            contract_address: &row.contract_address,
-            rpc_provider_alias: &row.rpc_provider_alias,
-            start_block: row.start_block,
-            end_block: row.end_block,
-            transfer_count: row.transfer_count,
-            active_senders: row.active_senders,
-            active_recipients: row.active_recipients,
-            mint_count: row.mint_count,
-            burn_count: row.burn_count,
-            mint_sum_raw: &row.mint_sum_raw,
-            burn_sum_raw: &row.burn_sum_raw,
-            net_mint_raw: row.net_mint_raw.as_deref(),
-            total_supply_start_raw: row.total_supply_start_raw.as_deref(),
-            total_supply_end_raw: row.total_supply_end_raw.as_deref(),
-            total_supply_delta_raw: row.total_supply_delta_raw.as_deref(),
-            discrepancy_raw: row.discrepancy_raw.as_deref(),
-            qa_status: qa_status(row),
-            generated_at: &row.generated_at,
-        };
-        wtr.serialize(rec)?;
+        wtr.serialize(row)?;
     }
     wtr.flush()?;
     Ok(())
 }
 
-fn write_mint_burn_summary_csv(out_dir: &std::path::Path, asset: &str, rows: &[ChainRun]) -> Result<()> {
-    let mut wtr = csv::Writer::from_path(out_dir.join("mint_burn_summary.csv"))?;
-    for row in rows {
-        wtr.serialize(MintBurnSummaryRow {
-            asset,
-            chain: &row.chain,
-            start_block: row.start_block,
-            end_block: row.end_block,
-            mint_count: row.mint_count,
-            burn_count: row.burn_count,
-            mint_sum_raw: &row.mint_sum_raw,
-            burn_sum_raw: &row.burn_sum_raw,
-            net_mint_raw: row.net_mint_raw.as_deref(),
-        })?;
+fn write_supply_audit_md(
+    out_dir: &std::path::Path,
+    asset: &str,
+    generated_at: &str,
+    from_block: u64,
+    to_block_raw: &str,
+    rows: &[SupplyAuditRow],
+    qa: &[QaChain],
+) -> Result<()> {
+    let mut md = String::new();
+    md.push_str(&format!("# {} supply audit\n\n", asset.to_uppercase()));
+    md.push_str(&format!("**Generated:** {}\n\n", generated_at));
+    md.push_str("## Provenance\n\n");
+    md.push_str(&format!(
+        "- **from_block:** {}\n- **to_block (requested):** {}\n\n",
+        from_block, to_block_raw
+    ));
+
+    md.push_str(
+        "> Active sender/recipient counts count addresses that appear in Transfer events **within this block window only**. \
+They are **not** estimates of total token holders or a full holder reconstruction.\n\n",
+    );
+
+    md.push_str("## Per-chain results\n\n");
+    for (row, q) in rows.iter().zip(qa.iter()) {
+        md.push_str(&format!("### {}\n\n", row.chain));
+        md.push_str(&format!(
+            "- **Resolved to block:** {}\n",
+            row.resolved_to_block
+                .map(|b| b.to_string())
+                .unwrap_or_else(|| "—".into())
+        ));
+        md.push_str(&format!(
+            "- **Contract:** `{}`\n",
+            row.contract_address
+        ));
+        md.push_str(&format!(
+            "- **Transfer events (deduped):** {}\n",
+            row.transfer_event_count
+        ));
+        md.push_str(&format!(
+            "- **Active senders / recipients (window):** {} / {}\n",
+            row.active_senders, row.active_recipients
+        ));
+        md.push_str(&format!(
+            "- **Mints / burns / plain transfers:** {} / {} / {}\n",
+            row.mint_count, row.burn_count, row.plain_transfer_count
+        ));
+        md.push_str(&format!(
+            "- **Sum mints / burns (raw):** {} / {}\n",
+            row.sum_mints_raw, row.sum_burns_raw
+        ));
+        md.push_str(&format!(
+            "- **totalSupply @ start−1:** {}  _( {} )_\n",
+            row.total_supply_at_start_minus_1.as_deref().unwrap_or("—"),
+            row.total_supply_at_start_minus_1_provenance
+        ));
+        md.push_str(&format!(
+            "- **totalSupply @ end:** {}\n",
+            row.total_supply_at_end.as_deref().unwrap_or("—")
+        ));
+        md.push_str(&format!(
+            "- **On-chain Δ / net mint / discrepancy (raw int):** {} / {} / {}\n",
+            row.onchain_delta_raw.as_deref().unwrap_or("—"),
+            row.net_mint_raw.as_deref().unwrap_or("—"),
+            row.discrepancy_raw.as_deref().unwrap_or("—"),
+        ));
+
+        md.push_str("\n**QA gates:**\n\n");
+        md.push_str(&format!(
+            "| metadata | historical totalSupply | no dup logs | decode | supply invariant |\n|---|---|---|---|---|\n| {} | {} | {} | {} | {} |\n\n",
+            gate_csv(row.metadata_call_pass),
+            gate_csv(row.historical_supply_pass),
+            gate_opt_csv(row.no_duplicate_logs_pass),
+            gate_opt_csv(row.transfer_decode_pass),
+            gate_opt_csv(row.supply_invariant_pass),
+        ));
+
+        if !q.errors.is_empty() {
+            md.push_str("**Errors:**\n\n");
+            for e in &q.errors {
+                md.push_str(&format!("- {}\n", e));
+            }
+            md.push('\n');
+        }
     }
-    wtr.flush()?;
+
+    md.push_str("---\n\n");
+    md.push_str(
+        "_Window-limited Transfer audit. Not a reserve audit, price analysis, or full-history holder census._\n",
+    );
+
+    std::fs::write(out_dir.join("supply_audit.md"), md)?;
     Ok(())
 }
 
-fn write_transfer_summary_csv(out_dir: &std::path::Path, asset: &str, rows: &[ChainRun]) -> Result<()> {
-    let mut wtr = csv::Writer::from_path(out_dir.join("transfer_summary.csv"))?;
-    for row in rows {
-        wtr.serialize(TransferSummaryRow {
-            asset,
-            chain: &row.chain,
-            start_block: row.start_block,
-            end_block: row.end_block,
-            transfer_count: row.transfer_count,
-            active_senders: row.active_senders,
-            active_recipients: row.active_recipients,
-        })?;
-    }
-    wtr.flush()?;
-    Ok(())
-}
-
-fn write_qa_report_json(out_dir: &std::path::Path, asset: &str, generated_at: &str, rows: &[ChainRun]) -> Result<()> {
-    let report = QaReport {
-        asset,
-        generated_at,
-        chains: rows
-            .iter()
-            .map(|row| QaChain {
-                chain: &row.chain,
-                chain_id: row.chain_id,
-                contract_address: &row.contract_address,
-                rpc_provider_alias: &row.rpc_provider_alias,
-                start_block: row.start_block,
-                end_block: row.end_block,
-                gates: QaGates {
-                    metadata_calls_pass: gate_bool(row.metadata_calls_pass),
-                    historical_total_supply_calls_pass: gate_bool(row.historical_total_supply_pass),
-                    transfer_logs_fetched_pass: gate_bool(row.transfer_logs_fetched_pass),
-                    no_duplicate_logs_pass: gate_opt(row.no_duplicate_logs_pass),
-                    transfer_decode_pass: gate_opt(row.transfer_decode_pass),
-                    supply_invariant_pass: gate_opt(row.supply_invariant_pass),
-                    provenance_stamped_pass: gate_bool(row.provenance_stamped_pass),
-                    no_simulated_data_pass: gate_bool(row.no_simulated_data_pass),
-                },
-                chunking: row.chunking,
-                duplicate_count: row.duplicate_count,
-                decode_error_count: row.decode_error_count,
-                errors: &row.errors,
-            })
-            .collect(),
-    };
-    std::fs::write(
-        out_dir.join("qa_report.json"),
-        serde_json::to_string_pretty(&report)?,
-    )?;
-    Ok(())
-}
-
-fn write_provenance_json(out_dir: &std::path::Path, asset: &str, generated_at: &str, rows: &[ChainRun]) -> Result<()> {
+fn write_provenance_json(
+    out_dir: &std::path::Path,
+    asset: &str,
+    generated_at: &str,
+    rows: &[SupplyAuditRow],
+) -> Result<()> {
     let report = ProvenanceReport {
-        asset,
-        generated_at,
-        data_source: "onchain_rpc",
+        asset: asset.to_uppercase(),
+        generated_at: generated_at.to_string(),
+        data_source: "onchain_rpc".into(),
         simulated_data: false,
         chains: rows
             .iter()
-            .map(|row| ProvenanceRow {
-                asset,
-                chain: &row.chain,
-                chain_id: row.chain_id,
-                contract_address: &row.contract_address,
-                rpc_provider_alias: &row.rpc_provider_alias,
-                start_block: row.start_block,
-                end_block: row.end_block,
-                fetched_at: &row.fetched_at,
-                generated_at: &row.generated_at,
-                topics: &row.topics,
-                data_source: &row.data_source,
-                simulated_data: row.simulated_data,
-                chunking: row.chunking,
+            .map(|r| ProvenanceChain {
+                chain: r.chain.clone(),
+                chain_id: r.chain_id,
+                contract_address: r.contract_address.clone(),
+                from_block: r.from_block,
+                resolved_to_block: r.resolved_to_block,
             })
             .collect(),
     };
@@ -743,40 +867,5 @@ fn write_provenance_json(out_dir: &std::path::Path, asset: &str, generated_at: &
         out_dir.join("provenance.json"),
         serde_json::to_string_pretty(&report)?,
     )?;
-    Ok(())
-}
-
-fn write_summary_md(out_dir: &std::path::Path, asset: &str, generated_at: &str, rows: &[ChainRun]) -> Result<()> {
-    let mut md = String::new();
-    md.push_str(&format!("# {} transfer-audit summary\n\n", asset.to_uppercase()));
-    md.push_str(&format!("Generated at: {}\n\n", generated_at));
-    md.push_str("Canonical artifacts: supply_audit.csv, qa_report.json, provenance.json.\n\n");
-    md.push_str("> Active senders/recipients are unique non-zero addresses in this window only; they are not holder counts.\n\n");
-
-    for row in rows {
-        md.push_str(&format!("## {}\n\n", row.chain));
-        md.push_str(&format!(
-            "- window: {} -> {}\n",
-            row.start_block,
-            row.end_block.map(|v| v.to_string()).unwrap_or_else(|| "unknown".into())
-        ));
-        md.push_str(&format!(
-            "- transfer_count={}, active_senders={}, active_recipients={}\n",
-            row.transfer_count, row.active_senders, row.active_recipients
-        ));
-        md.push_str(&format!(
-            "- mint_count={}, burn_count={}, mint_sum_raw={}, burn_sum_raw={}\n",
-            row.mint_count, row.burn_count, row.mint_sum_raw, row.burn_sum_raw
-        ));
-        md.push_str(&format!(
-            "- totalSupply_start_raw={}, totalSupply_end_raw={}, totalSupply_delta_raw={}, discrepancy_raw={}\n",
-            row.total_supply_start_raw.as_deref().unwrap_or(""),
-            row.total_supply_end_raw.as_deref().unwrap_or(""),
-            row.total_supply_delta_raw.as_deref().unwrap_or(""),
-            row.discrepancy_raw.as_deref().unwrap_or("")
-        ));
-        md.push_str(&format!("- qa_status={}\n\n", qa_status(row)));
-    }
-    std::fs::write(out_dir.join("summary.md"), md)?;
     Ok(())
 }

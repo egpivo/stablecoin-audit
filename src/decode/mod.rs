@@ -110,7 +110,6 @@ pub fn dedup_transfer_events(events: Vec<TransferEvent>) -> (Vec<TransferEvent>,
 }
 
 /// QA: attempt to decode a sample of raw logs. Returns (sample_size, fail_count, errors).
-#[cfg_attr(not(feature = "experimental"), allow(dead_code))]
 pub fn sample_decode_qa(
     logs: &[Log],
     chain: &str,
