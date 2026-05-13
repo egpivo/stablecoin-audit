@@ -1,0 +1,26 @@
+[package]
+name = "stablecoin-audit"
+version = "0.1.0"
+edition = "2021"
+description = "Reproducible, windowed audits of stablecoin supply and issuer control events across EVM chains"
+
+[[bin]]
+name = "stablecoin-audit"
+path = "src/main.rs"
+
+[features]
+# M2-M5: transfer-log fetch, supply invariant, control events, cross-chain report.
+# Not part of the Milestone 0/1 deliverable. Build with --features experimental.
+experimental = []
+
+[dependencies]
+alloy = { version = "0.8", features = ["full"] }
+tokio = { version = "1", features = ["full"] }
+serde = { version = "1", features = ["derive"] }
+serde_yaml = "0.9"
+serde_json = { version = "1", features = ["preserve_order"] }
+dotenvy = "0.15"
+clap = { version = "4", features = ["derive"] }
+anyhow = "1"
+csv = "1"
+chrono = { version = "0.4", features = ["serde"] }
