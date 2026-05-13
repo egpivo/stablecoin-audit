@@ -77,7 +77,7 @@ Written by experimental transfer-log commands:
 
 ## ControlEvent
 
-Written to `out/<asset>/control_events_<chain>.csv` by the `fetch` subcommand.
+Written to `out/<asset>/control_events_<chain>.csv` by the `fetch` subcommand (transfer logs path) and, in the v0.2 experimental path, by `control-audit` when issuer control logs are decoded to the same CSV shape.
 
 | Field | Type | Description |
 |---|---|---|
@@ -91,25 +91,27 @@ Written to `out/<asset>/control_events_<chain>.csv` by the `fetch` subcommand.
 
 ## QaReport
 
-Written to `out/<asset>/qa_report.json` by experimental report paths (`report` and `transfer-audit`).
+Written to `out/<asset>/qa_report.json` by `transfer-audit` (experimental). The `report` subcommand reads this file (with `provenance.json` and `supply_audit.csv`) to emit v0.1.5 stress outputs and does not overwrite `qa_report.json`.
 
 | Field | Type | Description |
 |---|---|---|
 | `asset` | `String` | Token symbol |
 | `generated_at` | `String` | UTC ISO 8601 timestamp |
+| `provenance` | object | Window metadata (`from_block`, `to_block_requested`, `generated_at`) |
 | `chains` | `Vec<QaChain>` | One entry per chain |
 
-Each `QaChain` has a `gates` object with five string fields:
+Each `QaChain` has a `gates` object with six string fields (`PASS`, `FAIL`, `UNAVAILABLE`, etc.):
 
 | Gate field | Description |
 |---|---|
-| `no_duplicate_logs` | No `(tx_hash, log_index)` duplicates in the raw log set |
-| `transfer_decode_sample` | Random sample of up to 100 logs decoded without error |
-| `all_transfer_decode` | Every log in the full window decoded without error |
-| `supply_invariant` | `sum(mints) - sum(burns) == totalSupply(end) - totalSupply(start-1)` |
-| `control_event_query` | Control event `eth_getLogs` call status |
+| `metadata_call_pass` | Token `name`/`symbol`/`decimals` RPC calls succeeded |
+| `historical_supply_pass` | `totalSupply` at window boundaries could be read when required |
+| `no_duplicate_logs_pass` | No `(tx_hash, log_index)` duplicates in the deduped transfer set |
+| `transfer_decode_pass` | Transfer logs in the window decode without error |
+| `supply_invariant_pass` | `sum(mints) - sum(burns)` matches on-chain supply delta for the window |
+| `provenance_stamped` | Contract and window metadata align with provenance stamping rules |
 
-Values are `PASS`, `FAIL`, `UNAVAILABLE`, or `WARN`. Gates are `UNAVAILABLE` for chains that hard-errored before evaluation (config/env/RPC errors).
+Gates are `UNAVAILABLE` when a chain hard-errored before evaluation (config/env/RPC errors).
 
 ## SupplyInvariant (experimental)
 

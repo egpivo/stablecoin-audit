@@ -46,7 +46,8 @@
 - JSON output written to `out/<asset>/metadata.json`.
 - `serde_json` with `preserve_order` feature keeps field order stable across runs.
 - Human-readable summary printed to stdout with comma-formatted token amounts.
-- Experimental commands additionally write transfer-audit outputs (`decoded_transfers.csv`, `supply_audit.csv`, `qa_report.json`, `supply_audit.md`).
+- **Experimental — transfer window (`transfer-audit`)**: writes `decoded_transfers.csv`, `supply_audit.csv`, `supply_audit.md`, `qa_report.json`, and **`provenance.json`** (`data_source`, `simulated_data`, per-chain contract and block window). Downstream **`report`** (v0.1.5) reads `qa_report.json`, `provenance.json`, and `supply_audit.csv` together, rejects `simulated_data=true` or non-`onchain_rpc` provenance, cross-checks chain sets and windows, and emits `v0_1_5_stress_summary.csv` and `v0_1_5_summary.md`.
+- **Experimental — control surface (`control-audit`)**: writes `control_events_<chain>.csv`, `control_qa_report.json`, **`control_provenance.json`** (top-level and per-chain provenance, including `chains[]`), and `control_surface_summary.md`. **`control-report`** (v0.2) reads QA + provenance + CSVs, rejects simulated provenance, requires **the same chain set** in QA and provenance with matching window fingerprints, **validates each CSV** (row count vs `control_event_count`, per-row `chain` and `block_number` within the QA window), then emits `v0_2_control_benchmark.csv` and `v0_2_control_benchmark.md`.
 
 ## Layer 7 — Cross-chain Summary
 

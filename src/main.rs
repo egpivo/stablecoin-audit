@@ -40,7 +40,7 @@ struct Cli {
 
 #[derive(Subcommand)]
 enum Commands {
-    /// [experimental] Transfer-log audit: decode, dedup, supply reconciliation
+    /// [experimental] Transfer-log audit with per-chain windows and supply invariant checks
     #[cfg(feature = "experimental")]
     TransferAudit {
         /// Asset symbol (e.g. USDC)
@@ -93,9 +93,32 @@ enum Commands {
         #[arg(long)]
         chunk_size: Option<u64>,
     },
-    /// [experimental] Generate cross-chain comparison report from existing fetch output
+    /// [experimental] Control-surface audit for issuer-side control events
+    #[cfg(feature = "experimental")]
+    ControlAudit {
+        /// Asset symbol (e.g. USDC)
+        #[arg(long, default_value = "USDC")]
+        asset: String,
+        /// Comma-separated chains (e.g. ethereum,base,arbitrum)
+        #[arg(long, value_delimiter = ',')]
+        chains: Vec<String>,
+        /// Start of block window
+        #[arg(long)]
+        from_block: u64,
+        /// End block height, or `latest`
+        #[arg(long)]
+        to_block: String,
+    },
+    /// [experimental] Generate v0.1.5 accounting/activity stress summary from transfer-audit artifacts
     #[cfg(feature = "experimental")]
     Report {
+        /// Asset symbol (e.g. USDC)
+        #[arg(long, default_value = "USDC")]
+        asset: String,
+    },
+    /// [experimental] Generate v0.2 control-surface benchmark from control-audit artifacts
+    #[cfg(feature = "experimental")]
+    ControlReport {
         /// Asset symbol (e.g. USDC)
         #[arg(long, default_value = "USDC")]
         asset: String,
@@ -202,9 +225,47 @@ async fn main() -> Result<()> {
             rpc::fetch_logs::run(&asset, &chains, from_block, to_block, chunk_size).await?;
         }
         #[cfg(feature = "experimental")]
+        Commands::ControlAudit {
+            asset,
+            chains,
+            from_block,
+            to_block,
+        } => {
+            validate_identifier(&asset, "--asset")?;
+            for chain in &chains {
+                validate_identifier(chain, "--chains")?;
+            }
+            if from_block == 0 {
+                anyhow::bail!("--from-block 0 is not supported; use deployment block or later");
+            }
+            let tb = to_block.trim();
+            if !tb.eq_ignore_ascii_case("latest") {
+                let b: u64 = tb.parse().map_err(|_| {
+                    anyhow::anyhow!(
+                        "--to-block must be a block number or 'latest'; got {:?}",
+                        to_block
+                    )
+                })?;
+                if b < from_block {
+                    anyhow::bail!("--to-block ({b}) must be >= --from-block ({from_block})");
+                }
+            }
+            let chains = if chains.is_empty() {
+                vec!["ethereum".into(), "base".into(), "arbitrum".into()]
+            } else {
+                chains
+            };
+            rpc::control_audit::run(&asset, &chains, from_block, tb).await?;
+        }
+        #[cfg(feature = "experimental")]
         Commands::Report { asset } => {
             validate_identifier(&asset, "--asset")?;
             rpc::report_cmd::run(&asset)?;
+        }
+        #[cfg(feature = "experimental")]
+        Commands::ControlReport { asset } => {
+            validate_identifier(&asset, "--asset")?;
+            rpc::control_report_cmd::run(&asset)?;
         }
     }
     Ok(())
