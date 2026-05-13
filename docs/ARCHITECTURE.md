@@ -46,7 +46,14 @@
 - JSON output written to `out/<asset>/metadata.json`.
 - `serde_json` with `preserve_order` feature keeps field order stable across runs.
 - Human-readable summary printed to stdout with comma-formatted token amounts.
-- Experimental commands additionally write transfer-audit outputs (`decoded_transfers.csv`, `supply_audit.csv`, `qa_report.json`, `supply_audit.md`).
+- Experimental `transfer-audit` additionally writes:
+  - `decoded_transfers.csv`
+  - `supply_audit.csv`
+  - `mint_burn_summary.csv`
+  - `transfer_summary.csv`
+  - `qa_report.json`
+  - `provenance.json`
+  - `summary.md`
 
 ## Layer 7 — Cross-chain Summary
 

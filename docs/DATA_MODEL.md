@@ -99,17 +99,78 @@ Written to `out/<asset>/qa_report.json` by experimental report paths (`report` a
 | `generated_at` | `String` | UTC ISO 8601 timestamp |
 | `chains` | `Vec<QaChain>` | One entry per chain |
 
-Each `QaChain` has a `gates` object with five string fields:
+`transfer-audit` writes per-chain QA with these gate fields:
 
 | Gate field | Description |
 |---|---|
-| `no_duplicate_logs` | No `(tx_hash, log_index)` duplicates in the raw log set |
-| `transfer_decode_sample` | Random sample of up to 100 logs decoded without error |
-| `all_transfer_decode` | Every log in the full window decoded without error |
-| `supply_invariant` | `sum(mints) - sum(burns) == totalSupply(end) - totalSupply(start-1)` |
-| `control_event_query` | Control event `eth_getLogs` call status |
+| `metadata_calls_pass` | ERC-20 metadata probes succeeded (`name`, `symbol`, `decimals`, live `totalSupply`) |
+| `historical_total_supply_calls_pass` | Both historical supply calls succeeded (`start-1`, `end`) |
+| `transfer_logs_fetched_pass` | Transfer logs query completed for the configured window |
+| `no_duplicate_logs_pass` | No duplicates by `(chain, contract_address, tx_hash, log_index)` |
+| `transfer_decode_pass` | Full decode of fetched Transfer logs succeeded |
+| `supply_invariant_pass` | `sum(mints) - sum(burns) == totalSupply(end) - totalSupply(start-1)` |
+| `provenance_stamped_pass` | Required provenance fields are present |
+| `no_simulated_data_pass` | Artifact is based on on-chain RPC data only |
 
-Values are `PASS`, `FAIL`, `UNAVAILABLE`, or `WARN`. Gates are `UNAVAILABLE` for chains that hard-errored before evaluation (config/env/RPC errors).
+Values are `PASS`, `FAIL`, or `UNAVAILABLE` (for unavailable checks after hard failures).
+
+## TransferAudit Artifacts (experimental)
+
+`transfer-audit` writes the following files under `out/<asset>/`:
+
+- `decoded_transfers.csv`
+- `supply_audit.csv`
+- `mint_burn_summary.csv`
+- `transfer_summary.csv`
+- `qa_report.json`
+- `provenance.json`
+- `summary.md` (human-readable wrapper; canonical artifacts are CSV/JSON)
+
+### supply_audit.csv (experimental)
+
+One row per chain-window.
+
+| Field | Type | Description |
+|---|---|---|
+| `asset` | `String` | Token symbol |
+| `chain` | `String` | Chain name |
+| `chain_id` | `u64` | EIP-155 chain ID |
+| `contract_address` | `String` | Token contract |
+| `rpc_provider_alias` | `String` | Configured RPC env-var alias |
+| `start_block` | `u64` | Window start |
+| `end_block` | `Option<u64>` | Resolved window end |
+| `transfer_count` | `usize` | Deduped Transfer event count |
+| `active_senders` | `usize` | Unique non-zero `from` addresses in window |
+| `active_recipients` | `usize` | Unique non-zero `to` addresses in window |
+| `mint_count` | `usize` | Mint event count |
+| `burn_count` | `usize` | Burn event count |
+| `mint_sum_raw` | `String` | Sum of mint values (raw integer) |
+| `burn_sum_raw` | `String` | Sum of burn values (raw integer) |
+| `net_mint_raw` | `Option<String>` | `mint_sum_raw - burn_sum_raw` |
+| `total_supply_start_raw` | `Option<String>` | `totalSupply(start-1)` raw integer |
+| `total_supply_end_raw` | `Option<String>` | `totalSupply(end)` raw integer |
+| `total_supply_delta_raw` | `Option<String>` | `total_supply_end_raw - total_supply_start_raw` |
+| `discrepancy_raw` | `Option<String>` | `net_mint_raw - total_supply_delta_raw` |
+| `qa_status` | `String` | Aggregate status derived from QA gates |
+| `generated_at` | `String` | UTC ISO 8601 timestamp |
+
+### provenance.json (experimental)
+
+Top-level fields:
+
+| Field | Type | Description |
+|---|---|---|
+| `asset` | `String` | Token symbol |
+| `generated_at` | `String` | UTC ISO 8601 timestamp |
+| `data_source` | `String` | Data source label (currently `onchain_rpc`) |
+| `simulated_data` | `bool` | Always `false` for on-chain artifacts |
+| `chains` | `Vec<ProvenanceChain>` | One entry per chain-window |
+
+Each `ProvenanceChain` includes:
+- identity: `asset`, `chain`, `chain_id`, `contract_address`
+- source: `rpc_provider_alias`, `topics`, `data_source`, `simulated_data`
+- window/time: `start_block`, `end_block`, `fetched_at`, `generated_at`
+- chunking stats: `initial_chunk`, `final_chunk`, `chunks_total`, `retries_total`, `backoffs_total`
 
 ## SupplyInvariant (experimental)
 
