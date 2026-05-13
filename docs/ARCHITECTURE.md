@@ -46,7 +46,15 @@
 - JSON output written to `out/<asset>/metadata.json`.
 - `serde_json` with `preserve_order` feature keeps field order stable across runs.
 - Human-readable summary printed to stdout with comma-formatted token amounts.
-- Experimental commands additionally write transfer-audit outputs (`decoded_transfers.csv`, `supply_audit.csv`, `qa_report.json`, `supply_audit.md`).
+- Experimental `transfer-audit` currently writes:
+  - `decoded_transfers.csv`
+  - `supply_audit.csv`
+  - `qa_report.json`
+  - `provenance.json`
+  - `supply_audit.md`
+- Experimental `report` (v0.1.5) reads v0.1 artifacts and emits accounting/activity stress summaries:
+  - `v0_1_5_stress_summary.csv`
+  - `v0_1_5_summary.md`
 
 ## Layer 7 — Cross-chain Summary
 

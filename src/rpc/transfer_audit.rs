@@ -47,6 +47,24 @@ struct ProvenanceBlock {
 }
 
 #[derive(Serialize)]
+struct ProvenanceReport {
+    asset: String,
+    generated_at: String,
+    data_source: String,
+    simulated_data: bool,
+    chains: Vec<ProvenanceChain>,
+}
+
+#[derive(Serialize)]
+struct ProvenanceChain {
+    chain: String,
+    chain_id: u64,
+    contract_address: String,
+    from_block: u64,
+    resolved_to_block: Option<u64>,
+}
+
+#[derive(Serialize)]
 struct QaChain {
     chain: String,
     chain_id: u64,
@@ -195,12 +213,13 @@ pub async fn run(
         out_dir.join("qa_report.json"),
         serde_json::to_string_pretty(&qa_report)?,
     )?;
+    write_provenance_json(&out_dir, asset, &generated_at, &supply_rows)?;
 
     println!(
         "\nOutputs written under {}:",
         out_dir.display()
     );
-    println!("  decoded_transfers.csv, supply_audit.csv, qa_report.json, supply_audit.md");
+    println!("  decoded_transfers.csv, supply_audit.csv, qa_report.json, provenance.json, supply_audit.md");
 
     if any_hard_error {
         anyhow::bail!(
@@ -819,5 +838,34 @@ They are **not** estimates of total token holders or a full holder reconstructio
     );
 
     std::fs::write(out_dir.join("supply_audit.md"), md)?;
+    Ok(())
+}
+
+fn write_provenance_json(
+    out_dir: &std::path::Path,
+    asset: &str,
+    generated_at: &str,
+    rows: &[SupplyAuditRow],
+) -> Result<()> {
+    let report = ProvenanceReport {
+        asset: asset.to_uppercase(),
+        generated_at: generated_at.to_string(),
+        data_source: "onchain_rpc".into(),
+        simulated_data: false,
+        chains: rows
+            .iter()
+            .map(|r| ProvenanceChain {
+                chain: r.chain.clone(),
+                chain_id: r.chain_id,
+                contract_address: r.contract_address.clone(),
+                from_block: r.from_block,
+                resolved_to_block: r.resolved_to_block,
+            })
+            .collect(),
+    };
+    std::fs::write(
+        out_dir.join("provenance.json"),
+        serde_json::to_string_pretty(&report)?,
+    )?;
     Ok(())
 }

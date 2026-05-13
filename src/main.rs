@@ -40,7 +40,7 @@ struct Cli {
 
 #[derive(Subcommand)]
 enum Commands {
-    /// [experimental] Transfer-log audit: decode, dedup, supply reconciliation
+    /// [experimental] Transfer-log audit with per-chain windows and supply invariant
     #[cfg(feature = "experimental")]
     TransferAudit {
         /// Asset symbol (e.g. USDC)
@@ -93,7 +93,7 @@ enum Commands {
         #[arg(long)]
         chunk_size: Option<u64>,
     },
-    /// [experimental] Generate cross-chain comparison report from existing fetch output
+    /// [experimental] Generate v0.1.5 accounting/activity stress summary from transfer-audit artifacts
     #[cfg(feature = "experimental")]
     Report {
         /// Asset symbol (e.g. USDC)
