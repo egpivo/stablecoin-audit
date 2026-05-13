@@ -5,6 +5,12 @@ pub mod transfer_audit;
 pub mod fetch_logs;
 #[cfg(feature = "experimental")]
 pub mod report_cmd;
+#[cfg(feature = "experimental")]
+pub mod cross_chain_summary;
+#[cfg(feature = "experimental")]
+pub mod control_audit;
+#[cfg(feature = "experimental")]
+pub mod control_report_cmd;
 
 use alloy::providers::{ProviderBuilder, RootProvider};
 use alloy::transports::http::{Client, Http};

@@ -46,12 +46,14 @@
 - JSON output written to `out/<asset>/metadata.json`.
 - `serde_json` with `preserve_order` feature keeps field order stable across runs.
 - Human-readable summary printed to stdout with comma-formatted token amounts.
-- Experimental commands additionally write transfer-audit outputs (`decoded_transfers.csv`, `supply_audit.csv`, `qa_report.json`, `supply_audit.md`).
+- Experimental **`fetch`** (`rpc::fetch_logs`): chunked `eth_getLogs` for **Transfer** + **issuer control** topics, deduped transfers, supply-invariant fields, writes `fetch_report.json`, `transfers_<chain>.csv`, `control_events_<chain>.csv`, and **`risk_flags.md`** (transfer QA + control event listing).
+- Experimental **`control-audit`** (`rpc::control_audit`): control-surface-only run — `control_events_<chain>.csv`, `control_qa_report.json`, `control_provenance.json`, `control_surface_summary.md`, **`risk_flags.md`**.
+- Experimental **`control-report`** (`rpc::control_report_cmd`): benchmark CSV/MD from a **full** aligned control bundle (`v0_2_control_benchmark.*`).
+- Experimental **`transfer-audit`**: window transfer audit with `decoded_transfers.csv`, `supply_audit.csv`, `qa_report.json`, `supply_audit.md`.
 
 ## Layer 7 — Cross-chain Summary
 
-- Not active in Milestone 1.
-- Planned: aggregate `ChainAuditResult` records from all chains into a single `CrossChainSummary` JSON and a markdown table, comparing circulating supply across chains for the same block window.
+- **Milestone 4 (experimental):** `cross-chain-summary --asset <SYM>` reads `out/<asset>/qa_report.json` and `supply_audit.csv` from one `transfer-audit` run. It requires **at least two chains**, aligns QA vs supply per chain, **rejects bundles where per-chain `from_block` / `to_block_requested` disagree with the top-level QA `provenance` window**, copies **QA gate strings** per chain into the summary, parses **`onchain_delta` as signed `I256`** (net-burn safe) and sums with overflow detection, labels **`total_supply_at_end` as decimal-formatted** (matching transfer-audit CSV, not raw base units), and writes `cross_chain_summary.json` (`schema_version: 2`) and `cross_chain_summary.md` with a bridge double-count disclaimer.
 
 ## Data Flow
 
