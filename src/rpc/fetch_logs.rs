@@ -5,6 +5,7 @@ use alloy::sol;
 use anyhow::Result;
 use chrono::Utc;
 use serde::Serialize;
+use std::path::Path;
 use std::str::FromStr;
 
 use crate::config::load_single_token_config;
@@ -354,6 +355,9 @@ pub async fn run(
     std::fs::write(&report_path, serde_json::to_string_pretty(&report)?)?;
     println!("\nReport written to {}", report_path.display());
 
+    write_fetch_risk_flags_md(&out_dir, asset, &report.generated_at, &report.chains)?;
+    println!("Written: {}", out_dir.join("risk_flags.md").display());
+
     if any_hard_error {
         anyhow::bail!(
             "one or more chains had hard errors; partial report at {}",
@@ -385,6 +389,93 @@ fn write_transfers_csv(
         wtr.serialize(ev)?;
     }
     wtr.flush()?;
+    Ok(())
+}
+
+fn write_fetch_risk_flags_md(
+    out_dir: &Path,
+    asset: &str,
+    generated_at: &str,
+    chains: &[ChainFetchResult],
+) -> Result<()> {
+    let mut md = String::new();
+    md.push_str("# Risk Flags — Fetch (transfers + control)\n\n");
+    md.push_str(&format!(
+        "## {} — Generated {}\n\n",
+        asset.to_uppercase(),
+        generated_at
+    ));
+
+    for r in chains {
+        md.push_str(&format!(
+            "### {} (blocks {} → {})\n",
+            r.chain, r.from_block, r.to_block
+        ));
+
+        match r.no_duplicate_logs_pass {
+            Some(true) => md.push_str("- [PASS] No duplicate transfer logs\n"),
+            Some(false) => md.push_str("- [FAIL] Duplicate transfer logs detected\n"),
+            None => md.push_str("- [SKIP] Duplicate transfer log check not evaluated\n"),
+        }
+        match r.transfer_decode_sample_pass {
+            Some(true) => md.push_str("- [PASS] Transfer decode QA sample pass\n"),
+            Some(false) => md.push_str("- [FAIL] Transfer decode QA sample failed\n"),
+            None => md.push_str("- [SKIP] Transfer decode QA sample not evaluated\n"),
+        }
+        match r.all_transfer_decode_pass {
+            Some(true) => md.push_str("- [PASS] All transfer logs decoded\n"),
+            Some(false) => md.push_str(&format!(
+                "- [FAIL] Full transfer decode had {} error(s)\n",
+                r.full_decode_error_count
+            )),
+            None => md.push_str("- [SKIP] Full transfer decode not evaluated\n"),
+        }
+        match r.supply_invariant_pass {
+            Some(true) => md.push_str("- [PASS] Supply invariant matched\n"),
+            Some(false) => md.push_str("- [FAIL] Supply invariant mismatch\n"),
+            None => md.push_str("- [WARN] Supply invariant unavailable\n"),
+        }
+
+        let qs = r.control_event_query_status.as_str();
+        if qs.starts_with("error") {
+            md.push_str(&format!("- [WARN] Control event query failed: {qs}\n"));
+        } else if qs == "skipped" {
+            md.push_str("- [INFO] Control event query skipped\n");
+        } else if r.control_event_count == 0 {
+            md.push_str("- [INFO] No issuer control events in window\n");
+        } else {
+            if qs == "partial" {
+                md.push_str("- [WARN] Control event query partial (decode errors)\n");
+            }
+            let p = out_dir.join(format!("control_events_{}.csv", r.chain));
+            if p.exists() {
+                let mut rdr = csv::Reader::from_path(&p)?;
+                for rec in rdr.deserialize::<crate::control_events::ControlEventRecord>() {
+                    let ev = rec?;
+                    let level = if ev.decode_status == "decode_error" {
+                        "[WARN]"
+                    } else {
+                        match ev.event_name.as_str() {
+                            "MinterConfigured" | "MinterRemoved" => "[INFO]",
+                            _ => "[WARN]",
+                        }
+                    };
+                    md.push_str(&format!(
+                        "- {level} {} ({}) [{}]\n",
+                        ev.event_name, ev.args_json, ev.decode_status
+                    ));
+                }
+            }
+        }
+
+        for e in &r.errors {
+            md.push_str(&format!("- [WARN] {e}\n"));
+        }
+        md.push('\n');
+    }
+
+    md.push_str("---\n\n_Window-scoped fetch audit; not reserve or AML attestation._\n");
+    std::fs::write(out_dir.join("risk_flags.md"), md)?;
     Ok(())
 }
 

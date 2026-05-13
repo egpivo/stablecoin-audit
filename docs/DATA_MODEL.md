@@ -77,7 +77,7 @@ Written by experimental transfer-log commands:
 
 ## ControlEvent
 
-Written to `out/<asset>/control_events_<chain>.csv` by the `fetch` subcommand.
+Written to `out/<asset>/control_events_<chain>.csv` by the `fetch` subcommand (transfer logs path) and, in the v0.2 experimental path, by `control-audit` when issuer control logs are decoded to the same CSV shape.
 
 | Field | Type | Description |
 |---|---|---|
@@ -122,3 +122,30 @@ totalSupply(end_block) - totalSupply(start_block - 1) == sum(mints) - sum(burns)
 ```
 
 All arithmetic uses raw `U256`/`I256` token units (no decimal scaling). Results are stored as raw integer strings in `_raw` fields. The `total_supply_at_start_minus_1` and `total_supply_at_end` boundary fields are decimal-scaled strings.
+
+## CrossChainSummary (experimental, Milestone 4)
+
+Written to `out/<asset>/cross_chain_summary.json` and `cross_chain_summary.md` by `cross-chain-summary` (`--features experimental`). Inputs must come from a **single** `transfer-audit` run: same `qa_report.json` provenance window as every row in `supply_audit.csv`, **at least two chains**, and aligned per-chain QA vs supply fingerprints. `onchain_delta` values are signed (`I256`); `sum_onchain_delta_raw` is the sum of those strings when every chain has a delta and the sum does not overflow.
+
+| Field | Type | Description |
+|---|---|---|
+| `schema_version` | `u32` | Currently `2` |
+| `asset` | `String` | Token symbol |
+| `generated_at` | `String` | When this summary was produced |
+| `transfer_audit_qa_generated_at` | `String` | `qa_report.json` top-level `generated_at` |
+| `transfer_audit_provenance_generated_at` | `String` | `qa_report.json` `provenance.generated_at` |
+| `window_from_block` | `u64` | Must match every summarized chain and supply row |
+| `window_to_block_requested` | `Option<String>` | Must match every supply row `to_block_requested` (after trim / numeric or `latest` rules) |
+| `chain_count` | `usize` | Number of chains (≥ 2) |
+| `sum_onchain_delta_raw` | `Option<String>` | Sum of per-chain signed deltas as decimal string, or absent |
+| `chains` | `Vec<...>` | One object per chain: ids, window, **QA `gates`**, activity counts, `total_supply_at_end_decimal` (not raw base units), `onchain_delta_raw` |
+| `warnings` | `Vec<String>` | e.g. bridge double-count disclaimer |
+
+## risk_flags.md (experimental)
+
+Human-readable Markdown (not JSON-schema’d). Two producers:
+
+- **`fetch`:** `out/<asset>/risk_flags.md` — per-chain transfer QA gates (dup / decode / supply invariant) plus issuer **control** events read back from `control_events_<chain>.csv` when present.
+- **`control-audit`:** same path **`out/<asset>/risk_flags.md`** — control QA gates and event listing (overwrites any prior file from another command in the same asset dir).
+
+For a combined transfer+control narrative after `transfer-audit`, use its outputs; re-run `fetch` or `control-audit` only when you intend to refresh that path’s `risk_flags.md`.

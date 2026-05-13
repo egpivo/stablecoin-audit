@@ -100,6 +100,31 @@ enum Commands {
         #[arg(long, default_value = "USDC")]
         asset: String,
     },
+    /// [experimental] Milestone 4: write `cross_chain_summary.{json,md}` from one `transfer-audit` run (≥2 chains; aligned `qa_report.json`, `supply_audit.csv`, provenance window)
+    #[cfg(feature = "experimental")]
+    CrossChainSummary {
+        /// Asset symbol (e.g. USDC)
+        #[arg(long, default_value = "USDC")]
+        asset: String,
+    },
+    /// [experimental] Milestone 5: issuer control events — query, decode, `control_events_<chain>.csv`, QA/provenance, `risk_flags.md`
+    #[cfg(feature = "experimental")]
+    ControlAudit {
+        #[arg(long, default_value = "USDC")]
+        asset: String,
+        #[arg(long, value_delimiter = ',')]
+        chains: Vec<String>,
+        #[arg(long)]
+        from_block: u64,
+        #[arg(long)]
+        to_block: String,
+    },
+    /// [experimental] v0.2 benchmark from `control-audit` artifacts (requires full QA↔provenance bundle)
+    #[cfg(feature = "experimental")]
+    ControlReport {
+        #[arg(long, default_value = "USDC")]
+        asset: String,
+    },
 }
 
 #[tokio::main]
@@ -205,6 +230,46 @@ async fn main() -> Result<()> {
         Commands::Report { asset } => {
             validate_identifier(&asset, "--asset")?;
             rpc::report_cmd::run(&asset)?;
+        }
+        #[cfg(feature = "experimental")]
+        Commands::CrossChainSummary { asset } => {
+            validate_identifier(&asset, "--asset")?;
+            rpc::cross_chain_summary::run(&asset)?;
+        }
+        #[cfg(feature = "experimental")]
+        Commands::ControlAudit {
+            asset,
+            chains,
+            from_block,
+            to_block,
+        } => {
+            validate_identifier(&asset, "--asset")?;
+            for chain in &chains {
+                validate_identifier(chain, "--chains")?;
+            }
+            if from_block == 0 {
+                anyhow::bail!("--from-block 0 is not supported");
+            }
+            let tb = to_block.trim();
+            if !tb.eq_ignore_ascii_case("latest") {
+                let b: u64 = tb.parse().map_err(|_| {
+                    anyhow::anyhow!("--to-block must be a block number or latest, got {:?}", to_block)
+                })?;
+                if b < from_block {
+                    anyhow::bail!("--to-block ({b}) must be >= --from-block ({from_block})");
+                }
+            }
+            let chains = if chains.is_empty() {
+                vec!["ethereum".into(), "base".into(), "arbitrum".into()]
+            } else {
+                chains
+            };
+            rpc::control_audit::run(&asset, &chains, from_block, tb).await?;
+        }
+        #[cfg(feature = "experimental")]
+        Commands::ControlReport { asset } => {
+            validate_identifier(&asset, "--asset")?;
+            rpc::control_report_cmd::run(&asset)?;
         }
     }
     Ok(())
