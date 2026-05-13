@@ -1,0 +1,15 @@
+asset: USDC
+chain: ethereum
+chain_id: 1
+contract_address: "0xA0b86991c6218b36c1d19D4a2e9Eb0cE3606eB48"
+decimals: 6
+issuer: Circle
+form: native
+rpc_url_env: ALCHEMY_ETHEREUM_URL
+deployment_block: 6082465
+expected_interfaces:
+  - ERC20
+  - MintBurn
+  - Blacklist
+  - Pause
+  - Upgradeable

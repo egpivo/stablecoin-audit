@@ -1,0 +1,15 @@
+asset: USDC
+chain: base
+chain_id: 8453
+contract_address: "0x833589fCD6eDb6E08f4c7C32D4f71b54bdA02913"
+decimals: 6
+issuer: Circle
+form: native
+rpc_url_env: ALCHEMY_BASE_URL
+deployment_block: 2085347
+expected_interfaces:
+  - ERC20
+  - MintBurn
+  - Blacklist
+  - Pause
+  - Upgradeable

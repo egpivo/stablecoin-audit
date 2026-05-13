@@ -1,0 +1,15 @@
+asset: USDC
+chain: arbitrum
+chain_id: 42161
+contract_address: "0xaf88d065e77c8cC2239327C5EDb3A432268e5831"
+decimals: 6
+issuer: Circle
+form: native
+rpc_url_env: ALCHEMY_ARBITRUM_URL
+deployment_block: 112849027
+expected_interfaces:
+  - ERC20
+  - MintBurn
+  - Blacklist
+  - Pause
+  - Upgradeable
