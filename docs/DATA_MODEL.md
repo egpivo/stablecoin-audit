@@ -56,9 +56,9 @@ Top-level output written to `out/<asset>/metadata.json`.
 
 ## TransferEvent
 
-Written by experimental transfer-log commands:
-- `fetch` -> `out/<asset>/transfers_<chain>.csv`
-- `transfer-audit` -> `out/<asset>/decoded_transfers.csv`
+Written by transfer-log commands:
+- `fetch` (experimental) -> `out/<asset>/transfers_<chain>.csv`
+- `transfer-audit` (v0.1) -> `out/<asset>/runs/<run_id>/decoded_transfers.csv`
 
 | Field | Type | Description |
 |---|---|---|
@@ -91,29 +91,36 @@ Written to `out/<asset>/control_events_<chain>.csv` by the `fetch` subcommand (t
 
 ## QaReport
 
-Written to `out/<asset>/qa_report.json` by experimental report paths (`report` and `transfer-audit`).
+Written to `out/<asset>/runs/<run_id>/qa_report.json` by `transfer-audit`.
 
 | Field | Type | Description |
 |---|---|---|
 | `asset` | `String` | Token symbol |
 | `generated_at` | `String` | UTC ISO 8601 timestamp |
+| `run_id` | `String` | Directory name under `runs/`; must match `cross-chain-summary --run-id` when present |
+| `provenance` | `Object` | Window stamp: `from_block`, `to_block_requested`, `generated_at`, optional `per_chain_spans` |
 | `chains` | `Vec<QaChain>` | One entry per chain |
 
-Each `QaChain` has a `gates` object with five string fields:
+When `provenance.per_chain_spans` is `true` (from `transfer-audit --window ...`), each chain row carries its own `from_block` / resolved end; `provenance.from_block` is the minimum start block across chains (hint only). `cross-chain-summary` skips the legacy “single global block window” equality checks in that mode.
 
-| Gate field | Description |
+`transfer-audit` also writes `out/<asset>/runs/<run_id>/provenance.json` (schema `transfer-audit-provenance-v1`) with per-chain **`window_start_block_timestamp_rfc3339`** / **`window_end_block_timestamp_rfc3339`** from block headers (UTC), and `summary.md`. The legacy experimental `report` command (built from `fetch_report.json`) may write a different `provenance.json` under `out/<asset>/`—do not mix paths.
+
+Each `QaChain` has a `gates` object with string fields (`PASS` / `FAIL` / `UNAVAILABLE`):
+
+| JSON field | Meaning |
 |---|---|
-| `no_duplicate_logs` | No `(tx_hash, log_index)` duplicates in the raw log set |
-| `transfer_decode_sample` | Random sample of up to 100 logs decoded without error |
-| `all_transfer_decode` | Every log in the full window decoded without error |
-| `supply_invariant` | `sum(mints) - sum(burns) == totalSupply(end) - totalSupply(start-1)` |
-| `control_event_query` | Control event `eth_getLogs` call status |
+| `metadata_call_pass` | `name` / `symbol` / `decimals` / live `totalSupply()` calls succeeded |
+| `historical_supply_pass` | Boundary `totalSupply` at `start−1` and end block (per AUDIT_GATES) |
+| `no_duplicate_logs_pass` | No duplicate `(chain, contract, tx_hash, log_index)` in the decoded set |
+| `transfer_decode_pass` | Every log in the window decoded without error |
+| `supply_invariant_pass` | `sum(mints) − sum(burns)` vs on-chain supply delta reconciles |
+| `provenance_stamped` | Non-empty run timestamp and window fields recorded |
 
-Values are `PASS`, `FAIL`, `UNAVAILABLE`, or `WARN`. Gates are `UNAVAILABLE` for chains that hard-errored before evaluation (config/env/RPC errors).
+Gates are `UNAVAILABLE` for chains that hard-errored before evaluation (config/env/RPC errors).
 
-## SupplyInvariant (experimental)
+## SupplyInvariant (v0.1 + experimental fetch)
 
-Computed per chain per window during `fetch` and `transfer-audit`.
+Computed per chain per window during `transfer-audit` and experimental `fetch`.
 
 The core accounting identity:
 
@@ -123,14 +130,15 @@ totalSupply(end_block) - totalSupply(start_block - 1) == sum(mints) - sum(burns)
 
 All arithmetic uses raw `U256`/`I256` token units (no decimal scaling). Results are stored as raw integer strings in `_raw` fields. The `total_supply_at_start_minus_1` and `total_supply_at_end` boundary fields are decimal-scaled strings.
 
-## CrossChainSummary (experimental, Milestone 4)
+## CrossChainSummary (v0.1)
 
-Written to `out/<asset>/cross_chain_summary.json` and `cross_chain_summary.md` by `cross-chain-summary` (`--features experimental`). Inputs must come from a **single** `transfer-audit` run: same `qa_report.json` provenance window as every row in `supply_audit.csv`, **at least two chains**, and aligned per-chain QA vs supply fingerprints. `onchain_delta` values are signed (`I256`); `sum_onchain_delta_raw` is the sum of those strings when every chain has a delta and the sum does not overflow.
+Written to **`out/<asset>/runs/<run_id>/cross_chain_summary.json`** and **`.md`** by `cross-chain-summary --asset <SYM> --run-id <run_id>`. Inputs are read only from that run directory (`qa_report.json` + `supply_audit.csv` from one `transfer-audit` run). Requires **at least two chains**, aligned per-chain QA vs supply fingerprints, and either (a) one shared global window where `qa_report.json` provenance matches every `supply_audit.csv` row, or (b) `provenance.per_chain_spans == true` from `--window` runs. If `qa_report.json` includes `run_id`, it must equal `--run-id`. `onchain_delta` values are signed (`I256`); `sum_onchain_delta_raw` is the sum of those strings when every chain has a delta and the sum does not overflow.
 
 | Field | Type | Description |
 |---|---|---|
 | `schema_version` | `u32` | Currently `2` |
 | `asset` | `String` | Token symbol |
+| `source_run_id` | `String` | Same as `--run-id` / `qa_report.json` `run_id` when stamped |
 | `generated_at` | `String` | When this summary was produced |
 | `transfer_audit_qa_generated_at` | `String` | `qa_report.json` top-level `generated_at` |
 | `transfer_audit_provenance_generated_at` | `String` | `qa_report.json` `provenance.generated_at` |
@@ -140,6 +148,8 @@ Written to `out/<asset>/cross_chain_summary.json` and `cross_chain_summary.md` b
 | `sum_onchain_delta_raw` | `Option<String>` | Sum of per-chain signed deltas as decimal string, or absent |
 | `chains` | `Vec<...>` | One object per chain: ids, window, **QA `gates`**, activity counts, `total_supply_at_end_decimal` (not raw base units), `onchain_delta_raw` |
 | `warnings` | `Vec<String>` | e.g. bridge double-count disclaimer |
+
+This summary supports **chain-level comparison** of on-chain accounting under one schema; it is **not** a reserve audit, peg proof, purchasing-power analysis, or holder census.
 
 ## risk_flags.md (experimental)
 

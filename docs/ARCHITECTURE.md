@@ -1,6 +1,6 @@
 # Architecture
 
-`stablecoin-audit` is a CLI tool that runs reproducible, windowed audits of stablecoin supply and issuer control events across EVM chains. It is structured in seven layers.
+`stablecoin-audit` is a CLI for **v0.1 windowed supply-invariant audits** and **chain-level comparison** of the same token symbol on multiple EVM deployments. Optional **`--features experimental`** adds fetch/report and issuer control surfaces. The code is organized in layers.
 
 ## Layer 1 — Config / Registry
 
@@ -12,7 +12,8 @@
 
 ## Layer 2 — Fetch
 
-- **Location**: `src/rpc/`
+- **Location**: `src/rpc/` (providers, block queries, log fetch helpers)
+- **`resolve-window` (v0.1):** `src/rpc/resolve_window.rs` — maps `--from` / `--to` RFC3339 UTC bounds to per-chain block heights via binary search on block header timestamps only (no `eth_getLogs`).
 - Builds an HTTP provider from `RootProvider<Http<reqwest::Client>>` using `alloy`.
 - **Chain identity check (hard per-chain precondition)**: calls `eth_chainId` and compares against `config.chain_id` before any contract call. A mismatch or RPC failure sets all gates to `[FAIL]` for that chain, skips remaining calls, and causes the command to exit nonzero after writing the partial report. This prevents silently auditing the wrong chain due to a miswired `.env` URL.
 - **End block resolution (hard per-chain precondition)**: resolves `--to-block latest` via `get_block_number()`. Failure is treated the same way — chain result is written with an error, remaining chains continue, command exits nonzero at the end.
@@ -21,16 +22,15 @@
 
 ## Layer 3 — Decode
 
-- **Location**: `src/rpc/metadata.rs` and future `src/rpc/logs.rs`
-- The `sol!` macro generates typed call builders and return structs from Solidity interface definitions.
-- `U256` totals are converted to decimal strings via `report::format_token_amount`.
-- Milestone 0/1 default build does not run transfer-log decode.
-- Experimental build (`--features experimental`) includes transfer-log decode and classifies each event as mint / burn / transfer using the zero address.
+- **Location**: `src/decode/mod.rs`
+- Transfer logs are decoded to typed events; mint/burn/transfer classification uses the zero address rule.
+- `U256` totals are converted to decimal strings via `report::format_token_amount` where appropriate.
+- Used by **v0.1 `transfer-audit`** and experimental **`fetch`**.
 
 ## Layer 4 — Reconstruction
 
-- Not active in Milestone 1.
-- Experimental `transfer-audit` performs window-scoped supply reconciliation (`net_mint` vs on-chain delta) but this remains outside Milestone 1 default scope.
+- Not a full holder reconstruction.
+- **`transfer-audit`** (v0.1) performs window-scoped supply reconciliation: mint/burn aggregates vs pinned `totalSupply` boundaries; outputs are under `out/<asset>/runs/<run_id>/`.
 
 ## Layer 5 — QA Gates
 
@@ -42,18 +42,15 @@
 
 ## Layer 6 — Reports
 
-- **Location**: `src/report/mod.rs`, output in `out/<asset>/`
-- JSON output written to `out/<asset>/metadata.json`.
-- `serde_json` with `preserve_order` feature keeps field order stable across runs.
-- Human-readable summary printed to stdout with comma-formatted token amounts.
-- Experimental **`fetch`** (`rpc::fetch_logs`): chunked `eth_getLogs` for **Transfer** + **issuer control** topics, deduped transfers, supply-invariant fields, writes `fetch_report.json`, `transfers_<chain>.csv`, `control_events_<chain>.csv`, and **`risk_flags.md`** (transfer QA + control event listing).
-- Experimental **`control-audit`** (`rpc::control_audit`): control-surface-only run — `control_events_<chain>.csv`, `control_qa_report.json`, `control_provenance.json`, `control_surface_summary.md`, **`risk_flags.md`**.
-- Experimental **`control-report`** (`rpc::control_report_cmd`): benchmark CSV/MD from a **full** aligned control bundle (`v0_2_control_benchmark.*`).
-- Experimental **`transfer-audit`**: window transfer audit with `decoded_transfers.csv`, `supply_audit.csv`, `qa_report.json`, `supply_audit.md`.
+- **Location**: `src/report/mod.rs`
+- **Metadata (always):** `out/<asset>/metadata.json` plus stdout.
+- **`transfer-audit` (v0.1):** `out/<asset>/runs/<run_id>/` — `decoded_transfers.csv`, `supply_audit.csv`, `supply_audit.md`, `qa_report.json`, `provenance.json` (`transfer-audit-provenance-v1`, includes per-chain block header timestamps), `summary.md`. Optional `--run-id`; default is a UTC timestamp id. Use `--window chain:from:to` (repeatable) for per-chain native block spans, or `--chains` + `--from-block` + `--to-block` for one numeric window on every chain.
+- **Experimental `fetch`** (`rpc::fetch_logs`): under `out/<asset>/` — chunked `eth_getLogs` for **Transfer** + **issuer control** topics, `fetch_report.json`, `transfers_<chain>.csv`, `control_events_<chain>.csv`, **`risk_flags.md`**.
+- **Experimental `control-audit` / `control-report`:** control-surface and benchmark artifacts (not v0.1 core).
 
 ## Layer 7 — Cross-chain Summary
 
-- **Milestone 4 (experimental):** `cross-chain-summary --asset <SYM>` reads `out/<asset>/qa_report.json` and `supply_audit.csv` from one `transfer-audit` run. It requires **at least two chains**, aligns QA vs supply per chain, **rejects bundles where per-chain `from_block` / `to_block_requested` disagree with the top-level QA `provenance` window**, copies **QA gate strings** per chain into the summary, parses **`onchain_delta` as signed `I256`** (net-burn safe) and sums with overflow detection, labels **`total_supply_at_end` as decimal-formatted** (matching transfer-audit CSV, not raw base units), and writes `cross_chain_summary.json` (`schema_version: 2`) and `cross_chain_summary.md` with a bridge double-count disclaimer.
+- **v0.1:** `cross-chain-summary --asset <SYM> --run-id <id>` reads **`out/<asset>/runs/<run_id>/qa_report.json`** and **`supply_audit.csv` only** (no silent fallback to other runs). Requires **≥ 2 chains**, per-chain QA vs supply alignment, and either a single global provenance window or `per_chain_spans`. Writes `cross_chain_summary.json` (`schema_version: 2`) and `cross_chain_summary.md` into **that same run directory**. Same scope limits as transfer-audit: **chain-level comparison** of on-chain accounting, not reserves, peg, purchasing power, or holder counts.
 
 ## Data Flow
 

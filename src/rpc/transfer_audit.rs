@@ -1,8 +1,9 @@
 //! Transfer-log audit: chunked `eth_getLogs`, decode, dedup, supply reconciliation.
 
+use alloy::eips::BlockNumberOrTag;
 use alloy::primitives::{Address, I256, U256};
 use alloy::providers::Provider;
-use alloy::rpc::types::BlockId;
+use alloy::rpc::types::{BlockId, BlockTransactionsKind};
 use alloy::sol;
 use anyhow::Result;
 use chrono::Utc;
@@ -13,8 +14,8 @@ use std::str::FromStr;
 use crate::config::load_single_token_config;
 use crate::decode::{decode_transfer_log, dedup_transfer_events, sample_decode_qa};
 use crate::fetch::{fetch_transfer_logs, FetchParams};
-use crate::report::{ensure_out_dir, format_token_amount};
-use crate::rpc::build_provider;
+use crate::report::{default_run_id, ensure_run_out_dir, format_token_amount, validate_run_id};
+use crate::rpc::{build_provider, HttpProvider};
 
 const DEFAULT_CHUNK_SIZE: u64 = 500;
 const QA_SAMPLE_SIZE: usize = 100;
@@ -34,19 +35,25 @@ sol! {
 struct QaReport {
     asset: String,
     generated_at: String,
+    run_id: String,
     provenance: ProvenanceBlock,
     chains: Vec<QaChain>,
 }
 
-#[derive(Serialize)]
+#[derive(Clone, Serialize)]
 struct ProvenanceBlock {
+    /// When `per_chain_spans` is true, each chain row carries its own `from_block` / `to_block_requested`;
+    /// this field is the minimum `from_block` across chains (display / fingerprint hint only).
     from_block: u64,
     #[serde(skip_serializing_if = "Option::is_none")]
     to_block_requested: Option<String>,
     generated_at: String,
+    /// True when the run used `--window chain:from:to` (independent block heights per chain).
+    #[serde(skip_serializing_if = "std::ops::Not::not")]
+    per_chain_spans: bool,
 }
 
-#[derive(Serialize)]
+#[derive(Clone, Serialize)]
 struct QaChain {
     chain: String,
     chain_id: u64,
@@ -59,7 +66,7 @@ struct QaChain {
     errors: Vec<String>,
 }
 
-#[derive(Serialize)]
+#[derive(Clone, Serialize)]
 struct QaGates {
     metadata_call_pass: String,
     historical_supply_pass: String,
@@ -99,6 +106,12 @@ struct SupplyAuditRow {
     supply_invariant_pass: Option<bool>,
     duplicate_count: usize,
     full_decode_error_count: usize,
+    /// Block header time for `from_block` (window start); not written to CSV.
+    #[serde(skip)]
+    window_start_block_timestamp_rfc3339: Option<String>,
+    /// Block header time for the resolved end block of the log window; not written to CSV.
+    #[serde(skip)]
+    window_end_block_timestamp_rfc3339: Option<String>,
 }
 
 fn gate_csv(pass: bool) -> &'static str {
@@ -117,90 +130,297 @@ fn gate_opt_csv(pass: Option<bool>) -> &'static str {
     }
 }
 
+/// Parse `--window chain:from:to` (inclusive end block `to`, same convention as `--to-block`).
+pub fn parse_window_arg(s: &str) -> Result<(String, u64, u64)> {
+    let parts: Vec<&str> = s.split(':').collect();
+    if parts.len() != 3 {
+        anyhow::bail!(
+            "expected --window chain:from:to with exactly two ':' separators; got {:?}",
+            s
+        );
+    }
+    let chain = parts[0].trim().to_string();
+    if chain.is_empty() {
+        anyhow::bail!("empty chain in --window {:?}", s);
+    }
+    if !chain
+        .chars()
+        .all(|c| c.is_ascii_alphanumeric() || c == '-' || c == '_')
+    {
+        anyhow::bail!(
+            "chain in --window {:?} must be alphanumeric / hyphen / underscore",
+            s
+        );
+    }
+    let from = parts[1]
+        .trim()
+        .parse::<u64>()
+        .map_err(|_| anyhow::anyhow!("invalid from_block in --window {:?}", s))?;
+    let to = parts[2]
+        .trim()
+        .parse::<u64>()
+        .map_err(|_| anyhow::anyhow!("invalid to_block in --window {:?}", s))?;
+    if from == 0 {
+        anyhow::bail!("--window from_block 0 is not supported");
+    }
+    if to < from {
+        anyhow::bail!("--window to_block ({to}) must be >= from_block ({from})");
+    }
+    Ok((chain, from, to))
+}
+
+async fn block_window_timestamp_rfc3339(
+    provider: &HttpProvider,
+    block_number: u64,
+) -> Option<String> {
+    let tag = BlockNumberOrTag::from(block_number);
+    match provider
+        .get_block_by_number(tag, BlockTransactionsKind::Hashes)
+        .await
+    {
+        Ok(Some(b)) => {
+            let ts = b.header.timestamp;
+            chrono::DateTime::from_timestamp(ts as i64, 0)
+                .map(|d| d.to_rfc3339_opts(chrono::SecondsFormat::Secs, true))
+        }
+        _ => None,
+    }
+}
+
 pub async fn run(
     asset: &str,
     chains: &[String],
     from_block: u64,
     to_block_raw: &str,
     chunk_size: Option<u64>,
+    run_id: Option<String>,
+) -> Result<()> {
+    run_inner(
+        asset,
+        RunMode::Unified {
+            chains,
+            from_block,
+            to_block_raw,
+        },
+        chunk_size,
+        run_id,
+    )
+    .await
+}
+
+pub async fn run_per_chain_windows(
+    asset: &str,
+    windows: Vec<(String, u64, u64)>,
+    chunk_size: Option<u64>,
+    run_id: Option<String>,
+) -> Result<()> {
+    run_inner(asset, RunMode::PerChain(windows), chunk_size, run_id).await
+}
+
+enum RunMode<'a> {
+    Unified {
+        chains: &'a [String],
+        from_block: u64,
+        to_block_raw: &'a str,
+    },
+    PerChain(Vec<(String, u64, u64)>),
+}
+
+async fn run_inner(
+    asset: &str,
+    mode: RunMode<'_>,
+    chunk_size: Option<u64>,
+    run_id: Option<String>,
 ) -> Result<()> {
     let chunk_size = chunk_size.unwrap_or(DEFAULT_CHUNK_SIZE);
-    let to_block_requested = if to_block_raw.eq_ignore_ascii_case("latest") {
-        None
-    } else {
-        Some(to_block_raw.parse::<u64>().map_err(|_| {
-            anyhow::anyhow!(
-                "--to-block must be a positive integer or 'latest'; got {:?}",
-                to_block_raw
-            )
-        })?)
+    let run_id = match run_id {
+        Some(r) => {
+            validate_run_id(&r)?;
+            r
+        }
+        None => default_run_id(),
     };
-
+    let out_dir = ensure_run_out_dir(asset, &run_id)?;
     let generated_at = Utc::now().to_rfc3339();
     let mut all_events: Vec<crate::decode::TransferEvent> = Vec::new();
     let mut supply_rows: Vec<SupplyAuditRow> = Vec::new();
     let mut qa_chains: Vec<QaChain> = Vec::new();
     let mut any_hard_error = false;
 
-    for chain in chains {
-        let (events, supply, qa, hard_err) = process_chain(
-            asset,
-            chain,
+    let (per_chain_spans, provenance, provenance_md_intro) = match mode {
+        RunMode::Unified {
+            chains,
             from_block,
-            to_block_requested,
-            chunk_size,
             to_block_raw,
-            &generated_at,
-        )
-        .await;
-        if hard_err {
-            any_hard_error = true;
-        }
-        all_events.extend(events);
-        qa_chains.push(qa);
-        supply_rows.push(supply);
-    }
+        } => {
+            let to_block_requested = if to_block_raw.eq_ignore_ascii_case("latest") {
+                None
+            } else {
+                Some(to_block_raw.parse::<u64>().map_err(|_| {
+                    anyhow::anyhow!(
+                        "--to-block must be a positive integer or 'latest'; got {:?}",
+                        to_block_raw
+                    )
+                })?)
+            };
 
-    let out_dir = ensure_out_dir(asset)?;
+            for chain in chains {
+                let (events, supply, qa, hard_err) = process_chain(
+                    asset,
+                    chain,
+                    from_block,
+                    to_block_requested,
+                    chunk_size,
+                    to_block_raw,
+                    &generated_at,
+                )
+                .await;
+                if hard_err {
+                    any_hard_error = true;
+                }
+                all_events.extend(events);
+                qa_chains.push(qa);
+                supply_rows.push(supply);
+            }
+
+            let prov = ProvenanceBlock {
+                from_block,
+                to_block_requested: if to_block_raw.eq_ignore_ascii_case("latest") {
+                    Some("latest".into())
+                } else {
+                    Some(to_block_raw.to_string())
+                },
+                generated_at: generated_at.clone(),
+                per_chain_spans: false,
+            };
+            let intro = format!(
+                "- **from_block:** {}\n- **to_block (requested):** {}\n\n",
+                from_block, to_block_raw
+            );
+            (false, prov, intro)
+        }
+        RunMode::PerChain(mut windows) => {
+            windows.sort_by(|a, b| a.0.cmp(&b.0));
+            let mut seen = HashSet::new();
+            for (c, _, _) in &windows {
+                if !seen.insert(c.as_str()) {
+                    anyhow::bail!("duplicate chain {:?} in --window arguments", c);
+                }
+            }
+            let min_from = windows
+                .iter()
+                .map(|(_, f, _)| *f)
+                .min()
+                .expect("windows non-empty");
+
+            for (chain, from_b, to_b) in windows {
+                let to_raw = to_b.to_string();
+                let (events, supply, qa, hard_err) = process_chain(
+                    asset,
+                    &chain,
+                    from_b,
+                    Some(to_b),
+                    chunk_size,
+                    &to_raw,
+                    &generated_at,
+                )
+                .await;
+                if hard_err {
+                    any_hard_error = true;
+                }
+                all_events.extend(events);
+                qa_chains.push(qa);
+                supply_rows.push(supply);
+            }
+
+            let mut intro = String::from(
+                "**Per-chain block spans** — each L2/L1 uses its own block height; \
+numbers are not comparable across chains, but metrics use one schema.\n\n",
+            );
+            for row in &supply_rows {
+                intro.push_str(&format!(
+                    "- **{}:** blocks `{}` → `{}` (resolved end {:?})\n",
+                    row.chain,
+                    row.from_block,
+                    row.to_block_requested,
+                    row.resolved_to_block
+                ));
+            }
+            intro.push('\n');
+
+            let prov = ProvenanceBlock {
+                from_block: min_from,
+                to_block_requested: Some("per_chain".into()),
+                generated_at: generated_at.clone(),
+                per_chain_spans: true,
+            };
+            (true, prov, intro)
+        }
+    };
+
+    let mut pairs: Vec<(SupplyAuditRow, QaChain)> = supply_rows
+        .into_iter()
+        .zip(qa_chains.into_iter())
+        .collect();
+    pairs.sort_by(|a, b| a.0.chain.cmp(&b.0.chain));
+    let (supply_rows, qa_chains): (Vec<_>, Vec<_>) = pairs.into_iter().unzip();
+
     write_decoded_transfers_csv(&out_dir, &all_events)?;
     write_supply_audit_csv(&out_dir, &supply_rows)?;
 
     write_supply_audit_md(
         &out_dir,
         asset,
+        &run_id,
         &generated_at,
-        from_block,
-        to_block_raw,
+        &provenance_md_intro,
         &supply_rows,
         &qa_chains,
     )?;
 
-    let provenance = ProvenanceBlock {
-        from_block,
-        to_block_requested: if to_block_raw.eq_ignore_ascii_case("latest") {
-            Some("latest".into())
-        } else {
-            Some(to_block_raw.to_string())
-        },
-        generated_at: generated_at.clone(),
-    };
-
     let qa_report = QaReport {
         asset: asset.to_uppercase(),
         generated_at: generated_at.clone(),
-        provenance,
-        chains: qa_chains,
+        run_id: run_id.clone(),
+        provenance: provenance.clone(),
+        chains: qa_chains.clone(),
     };
     std::fs::write(
         out_dir.join("qa_report.json"),
         serde_json::to_string_pretty(&qa_report)?,
     )?;
 
+    write_transfer_provenance_json(
+        &out_dir,
+        asset,
+        &run_id,
+        &generated_at,
+        per_chain_spans,
+        &supply_rows,
+    )?;
+    write_transfer_summary_md(
+        &out_dir,
+        asset,
+        &run_id,
+        &generated_at,
+        per_chain_spans,
+        &supply_rows,
+        &qa_chains,
+    )?;
+
     println!(
-        "\nOutputs written under {}:",
+        "\nRun id: {}\nOutputs written under {}:",
+        run_id,
         out_dir.display()
     );
-    println!("  decoded_transfers.csv, supply_audit.csv, qa_report.json, supply_audit.md");
+    println!(
+        "  decoded_transfers.csv, supply_audit.csv, supply_audit.md, qa_report.json,\n  provenance.json, summary.md"
+    );
+    println!(
+        "\nNext (≥2 chains): cargo run -- cross-chain-summary --asset {} --run-id {}",
+        asset.to_uppercase(),
+        run_id
+    );
 
     if any_hard_error {
         anyhow::bail!(
@@ -209,6 +429,170 @@ pub async fn run(
         );
     }
 
+    Ok(())
+}
+
+#[derive(Serialize)]
+struct TransferProvenanceJson {
+    schema: &'static str,
+    asset: String,
+    run_id: String,
+    generated_at: String,
+    per_chain_spans: bool,
+    chains: Vec<TransferProvenanceChain>,
+}
+
+#[derive(Serialize)]
+struct TransferProvenanceChain {
+    chain: String,
+    chain_id: u64,
+    contract_address: String,
+    from_block: u64,
+    to_block_requested: String,
+    resolved_to_block: Option<u64>,
+    /// Block header timestamp (UTC) for `from_block`.
+    window_start_block_timestamp_rfc3339: Option<String>,
+    /// Block header timestamp (UTC) for the resolved end block of the log window.
+    window_end_block_timestamp_rfc3339: Option<String>,
+}
+
+fn write_transfer_provenance_json(
+    out_dir: &std::path::Path,
+    asset: &str,
+    run_id: &str,
+    generated_at: &str,
+    per_chain_spans: bool,
+    rows: &[SupplyAuditRow],
+) -> Result<()> {
+    let chains = rows
+        .iter()
+        .map(|r| TransferProvenanceChain {
+            chain: r.chain.clone(),
+            chain_id: r.chain_id,
+            contract_address: r.contract_address.clone(),
+            from_block: r.from_block,
+            to_block_requested: r.to_block_requested.clone(),
+            resolved_to_block: r.resolved_to_block,
+            window_start_block_timestamp_rfc3339: r.window_start_block_timestamp_rfc3339.clone(),
+            window_end_block_timestamp_rfc3339: r.window_end_block_timestamp_rfc3339.clone(),
+        })
+        .collect();
+    let doc = TransferProvenanceJson {
+        schema: "transfer-audit-provenance-v1",
+        asset: asset.to_uppercase(),
+        run_id: run_id.to_string(),
+        generated_at: generated_at.to_string(),
+        per_chain_spans,
+        chains,
+    };
+    let path = out_dir.join("provenance.json");
+    std::fs::write(&path, serde_json::to_string_pretty(&doc)?)?;
+    Ok(())
+}
+
+fn write_transfer_summary_md(
+    out_dir: &std::path::Path,
+    asset: &str,
+    run_id: &str,
+    generated_at: &str,
+    per_chain_spans: bool,
+    rows: &[SupplyAuditRow],
+    qa: &[QaChain],
+) -> Result<()> {
+    let mut md = String::new();
+    md.push_str(&format!(
+        "# {} — transfer-audit summary\n\n",
+        asset.to_uppercase()
+    ));
+    md.push_str(&format!("**Run id:** `{}`\n\n", run_id));
+    md.push_str(&format!("**Generated:** {}\n\n", generated_at));
+    if per_chain_spans {
+        md.push_str(
+            "**Window:** per-chain block spans (see `provenance.json` or per-chain rows below). \
+Block heights are chain-native and not numerically comparable across chains.\n\n",
+        );
+    } else if let Some(r0) = rows.first() {
+        md.push_str(&format!(
+            "**Window:** from_block `{}` → to_block_requested `{}` (per-chain resolved end may vary if `latest`).\n\n",
+            r0.from_block, r0.to_block_requested
+        ));
+    }
+
+    md.push_str("## Chain overview\n\n");
+    md.push_str("| Chain | Chain ID | Contract | from → requested to | resolved end |\n");
+    md.push_str("|-------|---------:|----------|--------------------:|-------------:|\n");
+    for row in rows {
+        md.push_str(&format!(
+            "| {} | {} | `{}` | {} → {} | {} |\n",
+            row.chain,
+            row.chain_id,
+            row.contract_address,
+            row.from_block,
+            row.to_block_requested,
+            row.resolved_to_block
+                .map(|b| b.to_string())
+                .unwrap_or_else(|| "—".into())
+        ));
+    }
+    md.push('\n');
+
+    md.push_str("## Supply (window)\n\n");
+    md.push_str("| Chain | totalSupply @ start−1 | totalSupply @ end | on-chain Δ (signed) |\n");
+    md.push_str("|-------|----------------------|-------------------|---------------------|\n");
+    for row in rows {
+        md.push_str(&format!(
+            "| {} | {} | {} | {} |\n",
+            row.chain,
+            row.total_supply_at_start_minus_1.as_deref().unwrap_or("—"),
+            row.total_supply_at_end.as_deref().unwrap_or("—"),
+            row.onchain_delta_raw.as_deref().unwrap_or("—"),
+        ));
+    }
+    md.push('\n');
+
+    md.push_str("## Mint / burn / transfers (deduped)\n\n");
+    md.push_str("| Chain | Transfers | Mints | Burns | Plain | Net mint (raw) |\n");
+    md.push_str("|-------|----------:|------:|------:|------:|---------------:|\n");
+    for row in rows {
+        md.push_str(&format!(
+            "| {} | {} | {} | {} | {} | {} |\n",
+            row.chain,
+            row.transfer_event_count,
+            row.mint_count,
+            row.burn_count,
+            row.plain_transfer_count,
+            row.net_mint_raw.as_deref().unwrap_or("—"),
+        ));
+    }
+    md.push('\n');
+
+    md.push_str("## QA gates\n\n");
+    md.push_str("| Chain | metadata | hist_supply | no_dup | decode | supply_inv | provenance_stamp |\n");
+    md.push_str("|-------|----------|-------------|--------|--------|------------|------------------|\n");
+    for (row, q) in rows.iter().zip(qa.iter()) {
+        md.push_str(&format!(
+            "| {} | {} | {} | {} | {} | {} | {} |\n",
+            row.chain,
+            q.gates.metadata_call_pass,
+            q.gates.historical_supply_pass,
+            q.gates.no_duplicate_logs_pass,
+            q.gates.transfer_decode_pass,
+            q.gates.supply_invariant_pass,
+            q.gates.provenance_stamped,
+        ));
+    }
+    md.push('\n');
+
+    md.push_str("---\n\n");
+    md.push_str(
+        "> **Scope:** On-chain accounting in the declared block window(s) only. \
+This is not a reserve audit, peg or purchasing-power analysis, chain safety ranking, \
+or holder/identity attribution.\n\n\
+> **Comparable claim:** Under one schema, per-deployment supply movement and QA gates \
+can be read side-by-side for the same asset symbol.\n",
+    );
+
+    std::fs::write(out_dir.join("summary.md"), md)?;
     Ok(())
 }
 
@@ -385,6 +769,8 @@ async fn process_chain(
             supply_invariant_pass: None,
             duplicate_count: 0,
             full_decode_error_count: 0,
+            window_start_block_timestamp_rfc3339: None,
+            window_end_block_timestamp_rfc3339: None,
         };
         let qa = build_qa_chain(&supply, generated_at, &errors);
         return (empty_events, supply, qa, hard_error);
@@ -436,6 +822,15 @@ async fn process_chain(
 
     let historical_supply_pass = supply_start.is_some() && supply_end.is_some();
 
+    let (win_start_ts, win_end_ts) = if skip_rpc {
+        (None, None)
+    } else {
+        (
+            block_window_timestamp_rfc3339(&provider, from_block).await,
+            block_window_timestamp_rfc3339(&provider, end_blk).await,
+        )
+    };
+
     println!(
         "[{}] fetching Transfer logs block {} → {} (chunk {})",
         chain.to_uppercase(),
@@ -486,6 +881,8 @@ async fn process_chain(
                 supply_invariant_pass: None,
                 duplicate_count: 0,
                 full_decode_error_count: 0,
+                window_start_block_timestamp_rfc3339: win_start_ts.clone(),
+                window_end_block_timestamp_rfc3339: win_end_ts.clone(),
             };
             let qa = build_qa_chain(&supply, generated_at, &errors);
             return (empty_events, supply, qa, true);
@@ -636,6 +1033,8 @@ async fn process_chain(
         supply_invariant_pass: invariant_pass,
         duplicate_count: dup_count,
         full_decode_error_count: decode_errors,
+        window_start_block_timestamp_rfc3339: win_start_ts,
+        window_end_block_timestamp_rfc3339: win_end_ts,
     };
 
     let qa = build_qa_chain(&supply, generated_at, &errors);
@@ -678,6 +1077,8 @@ fn failed_supply_row(
         supply_invariant_pass: None,
         duplicate_count: 0,
         full_decode_error_count: 0,
+        window_start_block_timestamp_rfc3339: None,
+        window_end_block_timestamp_rfc3339: None,
     }
 }
 
@@ -729,20 +1130,18 @@ fn write_supply_audit_csv(out_dir: &std::path::Path, rows: &[SupplyAuditRow]) ->
 fn write_supply_audit_md(
     out_dir: &std::path::Path,
     asset: &str,
+    run_id: &str,
     generated_at: &str,
-    from_block: u64,
-    to_block_raw: &str,
+    provenance_md_intro: &str,
     rows: &[SupplyAuditRow],
     qa: &[QaChain],
 ) -> Result<()> {
     let mut md = String::new();
     md.push_str(&format!("# {} supply audit\n\n", asset.to_uppercase()));
+    md.push_str(&format!("**Run id:** `{}`\n\n", run_id));
     md.push_str(&format!("**Generated:** {}\n\n", generated_at));
     md.push_str("## Provenance\n\n");
-    md.push_str(&format!(
-        "- **from_block:** {}\n- **to_block (requested):** {}\n\n",
-        from_block, to_block_raw
-    ));
+    md.push_str(provenance_md_intro);
 
     md.push_str(
         "> Active sender/recipient counts count addresses that appear in Transfer events **within this block window only**. \
@@ -815,9 +1214,27 @@ They are **not** estimates of total token holders or a full holder reconstructio
 
     md.push_str("---\n\n");
     md.push_str(
-        "_Window-limited Transfer audit. Not a reserve audit, price analysis, or full-history holder census._\n",
+        "_v0.1 window-limited supply invariant audit. Not a reserve audit, peg or purchasing-power analysis, or full-history holder census._\n",
     );
 
     std::fs::write(out_dir.join("supply_audit.md"), md)?;
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::parse_window_arg;
+
+    #[test]
+    fn parse_window_ok() {
+        let (c, a, b) = parse_window_arg("ethereum:24000000:24001000").unwrap();
+        assert_eq!(c, "ethereum");
+        assert_eq!(a, 24_000_000);
+        assert_eq!(b, 24_001_000);
+    }
+
+    #[test]
+    fn parse_window_rejects_bad_range() {
+        assert!(parse_window_arg("base:100:50").is_err());
+    }
 }

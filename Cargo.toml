@@ -2,15 +2,15 @@
 name = "stablecoin-audit"
 version = "0.1.0"
 edition = "2021"
-description = "Reproducible, windowed audits of stablecoin supply and issuer control events across EVM chains"
+description = "Windowed supply-invariant audits and chain-level comparison for stablecoin deployments on EVM chains (v0.1 core; optional experimental fetch/control surfaces)"
 
 [[bin]]
 name = "stablecoin-audit"
 path = "src/main.rs"
 
 [features]
-# M2-M5: transfer-log fetch, supply invariant, control events, cross-chain report.
-# Not part of the Milestone 0/1 deliverable. Build with --features experimental.
+# v0.1 default: `metadata`, `transfer-audit`, `cross-chain-summary`.
+# Experimental: `fetch`, `report` (fetch bundle), issuer `control-audit` / `control-report`.
 experimental = []
 
 [dependencies]

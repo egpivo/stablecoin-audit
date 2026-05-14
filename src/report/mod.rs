@@ -1,5 +1,6 @@
 use alloy::primitives::U256;
-use anyhow::Result;
+use anyhow::{Context, Result};
+use chrono::Utc;
 use std::path::Path;
 
 pub fn ensure_out_dir(asset: &str) -> Result<std::path::PathBuf> {
@@ -12,6 +13,45 @@ pub fn ensure_out_dir(asset: &str) -> Result<std::path::PathBuf> {
     }
     let dir = Path::new("out").join(asset.to_lowercase());
     std::fs::create_dir_all(&dir)?;
+    Ok(dir)
+}
+
+/// `run_id` may appear in paths; restrict to safe single-segment directory names.
+pub fn validate_run_id(run_id: &str) -> Result<()> {
+    if run_id.is_empty() {
+        anyhow::bail!("run_id must not be empty");
+    }
+    if run_id == "." || run_id == ".." {
+        anyhow::bail!("run_id must not be '.' or '..'");
+    }
+    if !run_id
+        .chars()
+        .all(|c| c.is_ascii_alphanumeric() || c == '-' || c == '_')
+    {
+        anyhow::bail!(
+            "run_id must contain only letters, digits, hyphens, and underscores; got {:?}",
+            run_id
+        );
+    }
+    Ok(())
+}
+
+/// Default run id: sortable UTC stamp with milliseconds (filesystem-safe).
+pub fn default_run_id() -> String {
+    let now = Utc::now();
+    format!(
+        "{}_{:03}Z",
+        now.format("%Y%m%dT%H%M%S"),
+        now.timestamp_subsec_millis()
+    )
+}
+
+/// Resolved run directory: `out/<asset>/runs/<run_id>/`.
+pub fn ensure_run_out_dir(asset: &str, run_id: &str) -> Result<std::path::PathBuf> {
+    validate_run_id(run_id)?;
+    let base = ensure_out_dir(asset)?;
+    let dir = base.join("runs").join(run_id);
+    std::fs::create_dir_all(&dir).with_context(|| format!("create run dir {}", dir.display()))?;
     Ok(dir)
 }
 
@@ -101,6 +141,16 @@ mod tests {
     #[test]
     fn ensure_out_dir_rejects_dotdot() {
         assert!(ensure_out_dir("../evil").is_err());
+    }
+
+    #[test]
+    fn validate_run_id_accepts_stamp() {
+        validate_run_id("20260513T120000_001Z").unwrap();
+    }
+
+    #[test]
+    fn validate_run_id_rejects_slash() {
+        assert!(validate_run_id("a/b").is_err());
     }
 
     #[test]
