@@ -7,12 +7,14 @@ use serde::{Deserialize, Serialize};
 use std::collections::{HashMap, HashSet};
 use std::path::Path;
 
-use crate::report::ensure_out_dir;
+use crate::report::{ensure_run_out_dir, validate_run_id};
 
 #[derive(Debug, Deserialize)]
 struct QaReportFile {
     asset: String,
     generated_at: String,
+    #[serde(default)]
+    run_id: Option<String>,
     provenance: QaProvenanceBlock,
     chains: Vec<QaChainFile>,
 }
@@ -23,6 +25,9 @@ struct QaProvenanceBlock {
     #[serde(default)]
     to_block_requested: Option<String>,
     generated_at: String,
+    /// When true, each chain may use a different native block span; `from_block` here is informational (minimum).
+    #[serde(default)]
+    per_chain_spans: bool,
 }
 
 #[derive(Debug, Clone, Deserialize, Serialize)]
@@ -82,6 +87,8 @@ struct SupplyAuditRow {
 struct CrossChainSummary {
     schema_version: u32,
     asset: String,
+    /// `transfer-audit` run directory name under `out/<asset>/runs/`.
+    source_run_id: String,
     generated_at: String,
     transfer_audit_qa_generated_at: String,
     transfer_audit_provenance_generated_at: String,
@@ -125,8 +132,12 @@ fn addr_eq(a: &str, b: &str) -> bool {
     strip(a) == strip(b)
 }
 
-/// `qa_report.json` top-level provenance window must match every chain row and `supply_audit.csv`.
+/// `qa_report.json` top-level provenance must align with `supply_audit.csv` unless `per_chain_spans` is set.
 fn validate_provenance_window(qa: &QaReportFile, supply: &HashMap<String, SupplyAuditRow>) -> Result<()> {
+    if qa.provenance.per_chain_spans {
+        return Ok(());
+    }
+
     let prov_from = qa.provenance.from_block;
 
     for q in &qa.chains {
@@ -210,6 +221,7 @@ fn load_supply_csv(path: &Path) -> Result<HashMap<String, SupplyAuditRow>> {
 
 fn validate_and_build(
     asset_cli: &str,
+    run_id_cli: &str,
     qa: &QaReportFile,
     supply: &HashMap<String, SupplyAuditRow>,
 ) -> Result<(Vec<CrossChainChainSummary>, Option<String>, Vec<String>)> {
@@ -220,6 +232,15 @@ fn validate_and_build(
             qa.asset,
             asset_cli
         );
+    }
+    if let Some(ref qid) = qa.run_id {
+        if qid != run_id_cli {
+            anyhow::bail!(
+                "qa_report.json run_id {:?} does not match --run-id {:?}; refusing to summarize the wrong bundle",
+                qid,
+                run_id_cli
+            );
+        }
     }
 
     let mut qa_seen: HashSet<&str> = HashSet::new();
@@ -248,11 +269,18 @@ fn validate_and_build(
 
     validate_provenance_window(qa, supply)?;
 
-    let warnings = vec![
+    let mut warnings = vec![
         "Per-chain totalSupply(end) sums are not circulating supply across chains (bridged inventory double-counts). \
 Use this table for same-window, per-deployment accounting only."
             .to_string(),
     ];
+    if qa.provenance.per_chain_spans {
+        warnings.push(
+            "This run used per-chain native block spans (`--window`). Rows are comparable under one schema; \
+block numbers and window lengths are not assumed equal across chains. The signed delta sum is an arithmetic aggregate of per-chain windows."
+                .to_string(),
+        );
+    }
 
     let mut chain_names: Vec<String> = qa.chains.iter().map(|c| c.chain.clone()).collect();
     chain_names.sort();
@@ -342,13 +370,30 @@ fn write_markdown(path: &Path, summary: &CrossChainSummary) -> Result<()> {
     ));
     md.push_str(&format!("**Generated:** {}\n\n", summary.generated_at));
     md.push_str(&format!(
+        "**Source transfer-audit run:** `{}` (read `qa_report.json` + `supply_audit.csv` from this run only)\n\n",
+        summary.source_run_id
+    ));
+    md.push_str(&format!(
         "**Transfer-audit QA:** {} (provenance block generated_at: {})\n\n",
         summary.transfer_audit_qa_generated_at, summary.transfer_audit_provenance_generated_at
     ));
-    md.push_str(&format!(
-        "**Window:** from_block={}, to_block_requested={:?}\n\n",
-        summary.window_from_block, summary.window_to_block_requested
-    ));
+    if summary
+        .window_to_block_requested
+        .as_deref()
+        .map(|s| s == "per_chain")
+        .unwrap_or(false)
+    {
+        md.push_str(&format!(
+            "**Window:** per-chain native block spans (min from_block in bundle: `{}`). \
+See each row for `from_block` → resolved end; heights are not comparable across chains.\n\n",
+            summary.window_from_block
+        ));
+    } else {
+        md.push_str(&format!(
+            "**Window:** from_block={}, to_block_requested={:?}\n\n",
+            summary.window_from_block, summary.window_to_block_requested
+        ));
+    }
 
     for w in &summary.warnings {
         md.push_str(&format!("> {w}\n\n"));
@@ -389,26 +434,29 @@ fn write_markdown(path: &Path, summary: &CrossChainSummary) -> Result<()> {
         ));
     }
 
-    md.push_str("\n---\n\n_Milestone 4: same audit window, per-chain deployments. Not bridge netting or reserve attestation._\n");
+    md.push_str("\n---\n\n_v0.1: chain-level on-chain accounting comparison in the declared window(s). Not bridge netting, reserve attestation, peg or purchasing-power analysis, or holder census._\n");
     std::fs::write(path, md)?;
     Ok(())
 }
 
-/// Build `cross_chain_summary.json` and `cross_chain_summary.md` from `transfer-audit` outputs.
-pub fn run(asset: &str) -> Result<()> {
-    let out_dir = ensure_out_dir(asset)?;
+/// Build `cross_chain_summary.json` and `cross_chain_summary.md` from one `transfer-audit` run directory
+/// `out/<asset>/runs/<run_id>/`.
+pub fn run(asset: &str, run_id: &str) -> Result<()> {
+    validate_run_id(run_id)?;
+    let out_dir = ensure_run_out_dir(asset, run_id)?;
     let qa_path = out_dir.join("qa_report.json");
     let supply_path = out_dir.join("supply_audit.csv");
 
     if !qa_path.exists() {
         anyhow::bail!(
-            "qa_report.json not found at {}; run `transfer-audit` first",
-            qa_path.display()
+            "qa_report.json not found at {}; run `transfer-audit --run-id {}` (or omit for a timestamp id) first",
+            qa_path.display(),
+            run_id
         );
     }
     if !supply_path.exists() {
         anyhow::bail!(
-            "supply_audit.csv not found at {}; run `transfer-audit` first",
+            "supply_audit.csv not found at {}; run `transfer-audit` for this run_id first",
             supply_path.display()
         );
     }
@@ -420,12 +468,14 @@ pub fn run(asset: &str) -> Result<()> {
 
     let supply = load_supply_csv(&supply_path).context("read supply_audit.csv")?;
 
-    let (chains, sum_onchain_delta_raw, warnings) = validate_and_build(asset, &qa, &supply)?;
+    let (chains, sum_onchain_delta_raw, warnings) =
+        validate_and_build(asset, run_id, &qa, &supply)?;
 
     let generated_at = Utc::now().to_rfc3339();
     let summary = CrossChainSummary {
         schema_version: 2,
         asset: norm_asset(asset),
+        source_run_id: run_id.to_string(),
         generated_at: generated_at.clone(),
         transfer_audit_qa_generated_at: qa.generated_at.clone(),
         transfer_audit_provenance_generated_at: qa.provenance.generated_at.clone(),
@@ -446,8 +496,9 @@ pub fn run(asset: &str) -> Result<()> {
     write_markdown(&md_path, &summary)?;
 
     println!(
-        "\n=== Cross-chain summary ({}) — {} chains ===",
+        "\n=== Cross-chain summary ({}) — run `{}` — {} chains ===",
         norm_asset(asset),
+        run_id,
         summary.chain_count
     );
     if let Some(ref s) = summary.sum_onchain_delta_raw {

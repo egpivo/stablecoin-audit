@@ -1,11 +1,10 @@
 pub mod metadata;
-#[cfg(feature = "experimental")]
+pub mod resolve_window;
 pub mod transfer_audit;
 #[cfg(feature = "experimental")]
 pub mod fetch_logs;
 #[cfg(feature = "experimental")]
 pub mod report_cmd;
-#[cfg(feature = "experimental")]
 pub mod cross_chain_summary;
 #[cfg(feature = "experimental")]
 pub mod control_audit;
