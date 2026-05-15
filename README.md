@@ -102,6 +102,8 @@ This flow audits native USDC on Ethereum, Base, and Arbitrum over the **same UTC
 
 The resulting artifacts support reporting **per-chain supply invariant PASS/FAIL**, **transfer / mint / burn counts**, **net_mint**, and **window-active sender/recipient counts**—under one schema. They do **not** measure reserves, holder counts, payment volume, purchasing power, or “which chain is safer.”
 
+**Checked-in example (2026-05-01 → 2026-05-08 UTC):** [`docs/benchmarks/usdc_7d_20260501_20260508/`](docs/benchmarks/usdc_7d_20260501_20260508/) (`cross_chain_summary.md`, `supply_audit.csv`, `qa_report.json`, etc.). Large `decoded_transfers.csv` remains local under `out/` only.
+
 ## Conservative interpretation
 
 - **Supply invariant:** for each deployment and block window, the tool compares mint/burn aggregates to the change in `totalSupply` at pinned boundary blocks. A FAIL means the identity did not hold under the tool’s definitions—not automatically “fraud” or “depeg.”

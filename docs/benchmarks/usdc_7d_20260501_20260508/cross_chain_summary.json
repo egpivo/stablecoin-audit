@@ -1,0 +1,87 @@
+{
+  "schema_version": 2,
+  "asset": "USDC",
+  "source_run_id": "usdc_7d_20260501_20260508",
+  "generated_at": "2026-05-15T13:14:19.914985+00:00",
+  "transfer_audit_qa_generated_at": "2026-05-15T08:03:31.695921+00:00",
+  "transfer_audit_provenance_generated_at": "2026-05-15T08:03:31.695921+00:00",
+  "window_from_block": 24996368,
+  "window_to_block_requested": "per_chain",
+  "chain_count": 3,
+  "sum_onchain_delta_raw": "1394620127319062",
+  "chains": [
+    {
+      "chain": "arbitrum",
+      "chain_id": 42161,
+      "contract_address": "0xaf88d065e77c8cC2239327C5EDb3A432268e5831",
+      "from_block": 458085624,
+      "resolved_to_block": 460491249,
+      "gates": {
+        "metadata_call_pass": "PASS",
+        "historical_supply_pass": "PASS",
+        "no_duplicate_logs_pass": "PASS",
+        "transfer_decode_pass": "PASS",
+        "supply_invariant_pass": "PASS",
+        "provenance_stamped": "PASS"
+      },
+      "transfer_event_count": 4866248,
+      "active_senders": 287266,
+      "active_recipients": 290038,
+      "mint_count": 18899,
+      "burn_count": 13075,
+      "plain_transfer_count": 4834274,
+      "total_supply_at_end_decimal": "5742193181.040544",
+      "onchain_delta_raw": "216193007299893"
+    },
+    {
+      "chain": "base",
+      "chain_id": 8453,
+      "contract_address": "0x833589fCD6eDb6E08f4c7C32D4f71b54bdA02913",
+      "from_block": 45402127,
+      "resolved_to_block": 45704526,
+      "gates": {
+        "metadata_call_pass": "PASS",
+        "historical_supply_pass": "PASS",
+        "no_duplicate_logs_pass": "PASS",
+        "transfer_decode_pass": "PASS",
+        "supply_invariant_pass": "PASS",
+        "provenance_stamped": "PASS"
+      },
+      "transfer_event_count": 17208596,
+      "active_senders": 925834,
+      "active_recipients": 1118818,
+      "mint_count": 44948,
+      "burn_count": 17379,
+      "plain_transfer_count": 17146269,
+      "total_supply_at_end_decimal": "4416565673.317707",
+      "onchain_delta_raw": "-40678928030160"
+    },
+    {
+      "chain": "ethereum",
+      "chain_id": 1,
+      "contract_address": "0xA0b86991c6218b36c1d19D4a2e9Eb0cE3606eB48",
+      "from_block": 24996368,
+      "resolved_to_block": 25046605,
+      "gates": {
+        "metadata_call_pass": "PASS",
+        "historical_supply_pass": "PASS",
+        "no_duplicate_logs_pass": "PASS",
+        "transfer_decode_pass": "PASS",
+        "supply_invariant_pass": "PASS",
+        "provenance_stamped": "PASS"
+      },
+      "transfer_event_count": 3130346,
+      "active_senders": 485752,
+      "active_recipients": 621495,
+      "mint_count": 15289,
+      "burn_count": 11357,
+      "plain_transfer_count": 3103700,
+      "total_supply_at_end_decimal": "55382617442.148830",
+      "onchain_delta_raw": "1219106048049329"
+    }
+  ],
+  "warnings": [
+    "Per-chain totalSupply(end) sums are not circulating supply across chains (bridged inventory double-counts). Use this table for same-window, per-deployment accounting only.",
+    "This run used per-chain native block spans (`--window`). Rows are comparable under one schema; block numbers and window lengths are not assumed equal across chains. The signed delta sum is an arithmetic aggregate of per-chain windows."
+  ]
+}

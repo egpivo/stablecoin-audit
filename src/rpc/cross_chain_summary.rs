@@ -401,7 +401,7 @@ See each row for `from_block` → resolved end; heights are not comparable acros
 
     if let Some(ref s) = summary.sum_onchain_delta_raw {
         md.push_str(&format!(
-            "**Sum of per-chain on-chain supply deltas (signed `I256`, same string form as transfer-audit):** `{s}`\n\n"
+            "**Sum of per-chain on-chain supply deltas (signed I256, same string form as transfer-audit):** `{s}`\n\n"
         ));
     } else {
         md.push_str("**Sum of per-chain on-chain supply deltas:** unavailable (one or more chains missing `onchain_delta_raw`, or overflow when summing)\n\n");
