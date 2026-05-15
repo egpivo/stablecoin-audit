@@ -62,6 +62,9 @@ enum Commands {
         /// Run directory `out/<asset>/runs/<run_id>/` (alphanumeric, `-`, `_`). Default: UTC timestamp id.
         #[arg(long)]
         run_id: Option<String>,
+        /// Discard `checkpoint/` and re-fetch every chain (default: resume when checkpoint exists).
+        #[arg(long)]
+        fresh: bool,
     },
     Metadata {
         /// Asset symbol (e.g. USDC)
@@ -158,6 +161,7 @@ async fn main() -> Result<()> {
             chunk_size,
             windows,
             run_id,
+            fresh,
         } => {
             validate_identifier(&asset, "--asset")?;
             if let Some(cs) = chunk_size {
@@ -179,7 +183,8 @@ async fn main() -> Result<()> {
                     .iter()
                     .map(|w| rpc::transfer_audit::parse_window_arg(w))
                     .collect::<Result<Vec<_>>>()?;
-                rpc::transfer_audit::run_per_chain_windows(&asset, parsed, chunk_size, run_id).await?;
+                rpc::transfer_audit::run_per_chain_windows(&asset, parsed, chunk_size, run_id, fresh)
+                    .await?;
             } else {
                 for chain in &chains {
                     validate_identifier(chain, "--chains")?;
@@ -210,7 +215,8 @@ async fn main() -> Result<()> {
                 } else {
                     chains
                 };
-                rpc::transfer_audit::run(&asset, &chains, from_block, tb, chunk_size, run_id).await?;
+                rpc::transfer_audit::run(&asset, &chains, from_block, tb, chunk_size, run_id, fresh)
+                    .await?;
             }
         }
         Commands::ResolveWindow {

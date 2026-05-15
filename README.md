@@ -19,6 +19,7 @@ Each `transfer-audit` run writes to:
 
 - **`run_id`:** pass `--run-id my-smoke` or omit for an auto-generated UTC stamp (e.g. `20260513T143022_042Z`).
 - **`cross-chain-summary`** always takes **`--run-id`** so it never reads stale files from another run.
+- **Resume:** checkpoints live under `runs/<run_id>/checkpoint/`. After each successful `eth_getLogs` chunk (~`--chunk-size` blocks, default 500), progress is written to `fetch_progress_<chain>.json` and decoded rows append to `fetch_partial_<chain>.csv`; when a chain finishes, `transfers_<chain>.csv` + `chain_<chain>.json` are written and in-flight fetch files are removed. Re-run the **same** command with the same `--run-id` and `--window` args to resume mid-chain or skip completed chains. Use **`--fresh`** to discard all checkpoints. `eth_getLogs` retries up to 5 times per chunk on transient RPC errors. Smaller chunks improve resume granularity but add RPC round-trips (usually slower overall).
 
 ## Smoke test (engineering)
 

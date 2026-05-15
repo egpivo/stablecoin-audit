@@ -3,13 +3,13 @@ use alloy::rpc::types::Log;
 use alloy::sol;
 use alloy::sol_types::SolEvent;
 use anyhow::{Context, Result};
-use serde::Serialize;
+use serde::{Deserialize, Serialize};
 
 sol! {
     event Transfer(address indexed from, address indexed to, uint256 value);
 }
 
-#[derive(Debug, Clone, Serialize)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct TransferEvent {
     pub chain: String,
     pub contract_address: String,
