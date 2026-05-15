@@ -7,14 +7,18 @@ use alloy::rpc::types::{BlockId, BlockTransactionsKind};
 use alloy::sol;
 use anyhow::Result;
 use chrono::Utc;
-use serde::Serialize;
+use serde::{Deserialize, Serialize};
 use std::collections::HashSet;
 use std::str::FromStr;
 
-use crate::config::load_single_token_config;
+use crate::config::{load_single_token_config, TokenConfig};
 use crate::decode::{decode_transfer_log, dedup_transfer_events, sample_decode_qa};
-use crate::fetch::{fetch_transfer_logs, FetchParams};
+use crate::fetch::{fetch_transfer_logs_incremental, FetchParams};
 use crate::report::{default_run_id, ensure_run_out_dir, format_token_amount, validate_run_id};
+use crate::rpc::transfer_checkpoint::{
+    self, ChainSpecRecord, CheckpointChainBundle, CheckpointManifest, FetchChunkProgress,
+};
+use std::path::Path;
 use crate::rpc::{build_provider, HttpProvider};
 
 const DEFAULT_CHUNK_SIZE: u64 = 500;
@@ -53,8 +57,8 @@ struct ProvenanceBlock {
     per_chain_spans: bool,
 }
 
-#[derive(Clone, Serialize)]
-struct QaChain {
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct QaChain {
     chain: String,
     chain_id: u64,
     contract_address: String,
@@ -66,8 +70,8 @@ struct QaChain {
     errors: Vec<String>,
 }
 
-#[derive(Clone, Serialize)]
-struct QaGates {
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct QaGates {
     metadata_call_pass: String,
     historical_supply_pass: String,
     no_duplicate_logs_pass: String,
@@ -76,8 +80,8 @@ struct QaGates {
     provenance_stamped: String,
 }
 
-#[derive(Clone, Serialize)]
-struct SupplyAuditRow {
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct SupplyAuditRow {
     chain: String,
     chain_id: u64,
     contract_address: String,
@@ -194,6 +198,7 @@ pub async fn run(
     to_block_raw: &str,
     chunk_size: Option<u64>,
     run_id: Option<String>,
+    fresh: bool,
 ) -> Result<()> {
     run_inner(
         asset,
@@ -204,6 +209,7 @@ pub async fn run(
         },
         chunk_size,
         run_id,
+        fresh,
     )
     .await
 }
@@ -213,8 +219,9 @@ pub async fn run_per_chain_windows(
     windows: Vec<(String, u64, u64)>,
     chunk_size: Option<u64>,
     run_id: Option<String>,
+    fresh: bool,
 ) -> Result<()> {
-    run_inner(asset, RunMode::PerChain(windows), chunk_size, run_id).await
+    run_inner(asset, RunMode::PerChain(windows), chunk_size, run_id, fresh).await
 }
 
 enum RunMode<'a> {
@@ -226,34 +233,30 @@ enum RunMode<'a> {
     PerChain(Vec<(String, u64, u64)>),
 }
 
-async fn run_inner(
-    asset: &str,
-    mode: RunMode<'_>,
-    chunk_size: Option<u64>,
-    run_id: Option<String>,
-) -> Result<()> {
-    let chunk_size = chunk_size.unwrap_or(DEFAULT_CHUNK_SIZE);
-    let run_id = match run_id {
-        Some(r) => {
-            validate_run_id(&r)?;
-            r
-        }
-        None => default_run_id(),
-    };
-    let out_dir = ensure_run_out_dir(asset, &run_id)?;
-    let generated_at = Utc::now().to_rfc3339();
-    let mut all_events: Vec<crate::decode::TransferEvent> = Vec::new();
-    let mut supply_rows: Vec<SupplyAuditRow> = Vec::new();
-    let mut qa_chains: Vec<QaChain> = Vec::new();
-    let mut any_hard_error = false;
+struct ChainTask {
+    chain: String,
+    from_block: u64,
+    to_block_requested: String,
+    /// `None` → resolve `--to-block latest` at run time; `Some(n)` → fixed end block.
+    fixed_to_block: Option<u64>,
+}
 
-    let (per_chain_spans, provenance, provenance_md_intro) = match mode {
+struct RunPlan {
+    per_chain_spans: bool,
+    provenance_from_block: u64,
+    provenance_to_block_requested: Option<String>,
+    chain_tasks: Vec<ChainTask>,
+    spec_records: Vec<ChainSpecRecord>,
+}
+
+fn build_run_plan(mode: RunMode<'_>) -> Result<RunPlan> {
+    match mode {
         RunMode::Unified {
             chains,
             from_block,
             to_block_raw,
         } => {
-            let to_block_requested = if to_block_raw.eq_ignore_ascii_case("latest") {
+            let fixed_to_block = if to_block_raw.eq_ignore_ascii_case("latest") {
                 None
             } else {
                 Some(to_block_raw.parse::<u64>().map_err(|_| {
@@ -263,41 +266,35 @@ async fn run_inner(
                     )
                 })?)
             };
-
-            for chain in chains {
-                let (events, supply, qa, hard_err) = process_chain(
-                    asset,
-                    chain,
-                    from_block,
-                    to_block_requested,
-                    chunk_size,
-                    to_block_raw,
-                    &generated_at,
-                )
-                .await;
-                if hard_err {
-                    any_hard_error = true;
-                }
-                all_events.extend(events);
-                qa_chains.push(qa);
-                supply_rows.push(supply);
-            }
-
-            let prov = ProvenanceBlock {
-                from_block,
-                to_block_requested: if to_block_raw.eq_ignore_ascii_case("latest") {
-                    Some("latest".into())
-                } else {
-                    Some(to_block_raw.to_string())
-                },
-                generated_at: generated_at.clone(),
-                per_chain_spans: false,
+            let to_req = if to_block_raw.eq_ignore_ascii_case("latest") {
+                "latest".to_string()
+            } else {
+                to_block_raw.to_string()
             };
-            let intro = format!(
-                "- **from_block:** {}\n- **to_block (requested):** {}\n\n",
-                from_block, to_block_raw
-            );
-            (false, prov, intro)
+            let chain_tasks: Vec<ChainTask> = chains
+                .iter()
+                .map(|c| ChainTask {
+                    chain: c.clone(),
+                    from_block,
+                    to_block_requested: to_req.clone(),
+                    fixed_to_block,
+                })
+                .collect();
+            let spec_records: Vec<ChainSpecRecord> = chain_tasks
+                .iter()
+                .map(|t| ChainSpecRecord {
+                    chain: t.chain.clone(),
+                    from_block: t.from_block,
+                    to_block_requested: t.to_block_requested.clone(),
+                })
+                .collect();
+            Ok(RunPlan {
+                per_chain_spans: false,
+                provenance_from_block: from_block,
+                provenance_to_block_requested: Some(to_req),
+                chain_tasks,
+                spec_records,
+            })
         }
         RunMode::PerChain(mut windows) => {
             windows.sort_by(|a, b| a.0.cmp(&b.0));
@@ -312,50 +309,190 @@ async fn run_inner(
                 .map(|(_, f, _)| *f)
                 .min()
                 .expect("windows non-empty");
-
-            for (chain, from_b, to_b) in windows {
-                let to_raw = to_b.to_string();
-                let (events, supply, qa, hard_err) = process_chain(
-                    asset,
-                    &chain,
-                    from_b,
-                    Some(to_b),
-                    chunk_size,
-                    &to_raw,
-                    &generated_at,
-                )
-                .await;
-                if hard_err {
-                    any_hard_error = true;
-                }
-                all_events.extend(events);
-                qa_chains.push(qa);
-                supply_rows.push(supply);
-            }
-
-            let mut intro = String::from(
-                "**Per-chain block spans** — each L2/L1 uses its own block height; \
-numbers are not comparable across chains, but metrics use one schema.\n\n",
-            );
-            for row in &supply_rows {
-                intro.push_str(&format!(
-                    "- **{}:** blocks `{}` → `{}` (resolved end {:?})\n",
-                    row.chain,
-                    row.from_block,
-                    row.to_block_requested,
-                    row.resolved_to_block
-                ));
-            }
-            intro.push('\n');
-
-            let prov = ProvenanceBlock {
-                from_block: min_from,
-                to_block_requested: Some("per_chain".into()),
-                generated_at: generated_at.clone(),
+            let chain_tasks: Vec<ChainTask> = windows
+                .into_iter()
+                .map(|(chain, from_b, to_b)| {
+                    let to_raw = to_b.to_string();
+                    ChainTask {
+                        chain,
+                        from_block: from_b,
+                        to_block_requested: to_raw.clone(),
+                        fixed_to_block: Some(to_b),
+                    }
+                })
+                .collect();
+            let spec_records: Vec<ChainSpecRecord> = chain_tasks
+                .iter()
+                .map(|t| ChainSpecRecord {
+                    chain: t.chain.clone(),
+                    from_block: t.from_block,
+                    to_block_requested: t.to_block_requested.clone(),
+                })
+                .collect();
+            Ok(RunPlan {
                 per_chain_spans: true,
-            };
-            (true, prov, intro)
+                provenance_from_block: min_from,
+                provenance_to_block_requested: Some("per_chain".into()),
+                chain_tasks,
+                spec_records,
+            })
         }
+    }
+}
+
+fn build_provenance_md_intro(per_chain_spans: bool, supply_rows: &[SupplyAuditRow]) -> String {
+    if per_chain_spans {
+        let mut intro = String::from(
+            "**Per-chain block spans** — each L2/L1 uses its own block height; \
+numbers are not comparable across chains, but metrics use one schema.\n\n",
+        );
+        for row in supply_rows {
+            intro.push_str(&format!(
+                "- **{}:** blocks `{}` → `{}` (resolved end {:?})\n",
+                row.chain,
+                row.from_block,
+                row.to_block_requested,
+                row.resolved_to_block
+            ));
+        }
+        intro.push('\n');
+        intro
+    } else if let Some(r0) = supply_rows.first() {
+        format!(
+            "- **from_block:** {}\n- **to_block (requested):** {}\n\n",
+            r0.from_block, r0.to_block_requested
+        )
+    } else {
+        String::new()
+    }
+}
+
+async fn run_inner(
+    asset: &str,
+    mode: RunMode<'_>,
+    chunk_size: Option<u64>,
+    run_id: Option<String>,
+    fresh: bool,
+) -> Result<()> {
+    let chunk_size = chunk_size.unwrap_or(DEFAULT_CHUNK_SIZE);
+    let run_id = match run_id {
+        Some(r) => {
+            validate_run_id(&r)?;
+            r
+        }
+        None => default_run_id(),
+    };
+    let out_dir = ensure_run_out_dir(asset, &run_id)?;
+    let plan = build_run_plan(mode)?;
+
+    if fresh {
+        transfer_checkpoint::clear_checkpoint_dir(&out_dir)?;
+        println!("--fresh: cleared checkpoint under {}", out_dir.display());
+    }
+
+    let existing_manifest = if fresh {
+        None
+    } else {
+        transfer_checkpoint::load_manifest(&out_dir)?
+    };
+
+    let generated_at = existing_manifest
+        .as_ref()
+        .map(|m| m.started_at.clone())
+        .unwrap_or_else(|| Utc::now().to_rfc3339());
+
+    let mut manifest = match existing_manifest {
+        Some(m) => {
+            transfer_checkpoint::validate_manifest_matches(
+                &m,
+                asset,
+                &run_id,
+                chunk_size,
+                plan.per_chain_spans,
+                &plan.spec_records,
+            )?;
+            if !m.completed_chains.is_empty() {
+                println!(
+                    "\nResuming run `{run_id}` — skipping checkpointed chains: {}",
+                    m.completed_chains.join(", ")
+                );
+            }
+            m
+        }
+        None => {
+            let m = CheckpointManifest::new(
+                asset,
+                &run_id,
+                &generated_at,
+                chunk_size,
+                plan.per_chain_spans,
+                plan.spec_records.clone(),
+            );
+            transfer_checkpoint::save_manifest(&out_dir, &m)?;
+            m
+        }
+    };
+
+    let completed = transfer_checkpoint::completed_set(&manifest);
+    let mut all_events: Vec<crate::decode::TransferEvent> = Vec::new();
+    let mut supply_rows: Vec<SupplyAuditRow> = Vec::new();
+    let mut qa_chains: Vec<QaChain> = Vec::new();
+    let mut any_hard_error = false;
+
+    for task in &plan.chain_tasks {
+        if completed.contains(&task.chain) {
+            let (events, bundle) = transfer_checkpoint::load_completed_chain(&out_dir, &task.chain)?;
+            println!(
+                "[{}] loaded from checkpoint ({} transfers)",
+                task.chain.to_uppercase(),
+                events.len()
+            );
+            all_events.extend(events);
+            supply_rows.push(bundle.supply);
+            qa_chains.push(bundle.qa);
+            continue;
+        }
+
+        let (events, supply, qa, hard_err) = process_chain(
+            asset,
+            &task.chain,
+            task.from_block,
+            task.fixed_to_block,
+            chunk_size,
+            &task.to_block_requested,
+            &generated_at,
+            &out_dir,
+        )
+        .await;
+
+        if hard_err {
+            any_hard_error = true;
+            all_events.extend(events);
+            supply_rows.push(supply);
+            qa_chains.push(qa);
+        } else {
+            let bundle = CheckpointChainBundle {
+                supply: supply.clone(),
+                qa: qa.clone(),
+            };
+            transfer_checkpoint::save_completed_chain(
+                &out_dir,
+                &mut manifest,
+                &task.chain,
+                &events,
+                &bundle,
+            )?;
+            all_events.extend(events);
+            supply_rows.push(supply);
+            qa_chains.push(qa);
+        }
+    }
+
+    let provenance = ProvenanceBlock {
+        from_block: plan.provenance_from_block,
+        to_block_requested: plan.provenance_to_block_requested.clone(),
+        generated_at: generated_at.clone(),
+        per_chain_spans: plan.per_chain_spans,
     };
 
     let mut pairs: Vec<(SupplyAuditRow, QaChain)> = supply_rows
@@ -364,6 +501,8 @@ numbers are not comparable across chains, but metrics use one schema.\n\n",
         .collect();
     pairs.sort_by(|a, b| a.0.chain.cmp(&b.0.chain));
     let (supply_rows, qa_chains): (Vec<_>, Vec<_>) = pairs.into_iter().unzip();
+
+    let provenance_md_intro = build_provenance_md_intro(plan.per_chain_spans, &supply_rows);
 
     write_decoded_transfers_csv(&out_dir, &all_events)?;
     write_supply_audit_csv(&out_dir, &supply_rows)?;
@@ -395,7 +534,7 @@ numbers are not comparable across chains, but metrics use one schema.\n\n",
         asset,
         &run_id,
         &generated_at,
-        per_chain_spans,
+        plan.per_chain_spans,
         &supply_rows,
     )?;
     write_transfer_summary_md(
@@ -403,7 +542,7 @@ numbers are not comparable across chains, but metrics use one schema.\n\n",
         asset,
         &run_id,
         &generated_at,
-        per_chain_spans,
+        plan.per_chain_spans,
         &supply_rows,
         &qa_chains,
     )?;
@@ -423,11 +562,18 @@ numbers are not comparable across chains, but metrics use one schema.\n\n",
     );
 
     if any_hard_error {
+        println!(
+            "\nCheckpoint preserved at {}/checkpoint/ — re-run the same command (same --run-id, same --window) to resume finished chains.",
+            out_dir.display()
+        );
         anyhow::bail!(
             "one or more chains had hard errors; partial outputs written under {}",
             out_dir.display()
         );
     }
+
+    transfer_checkpoint::remove_checkpoint_dir(&out_dir)?;
+    println!("Checkpoint cleared (run completed successfully).");
 
     Ok(())
 }
@@ -604,6 +750,7 @@ async fn process_chain(
     chunk_size: u64,
     to_block_raw: &str,
     generated_at: &str,
+    out_dir: &Path,
 ) -> (
     Vec<crate::decode::TransferEvent>,
     SupplyAuditRow,
@@ -831,14 +978,6 @@ async fn process_chain(
         )
     };
 
-    println!(
-        "[{}] fetching Transfer logs block {} → {} (chunk {})",
-        chain.to_uppercase(),
-        from_block,
-        end_blk,
-        chunk_size
-    );
-
     let params = FetchParams {
         contract_address: addr,
         from_block,
@@ -846,77 +985,236 @@ async fn process_chain(
         chunk_size,
     };
 
-    let raw_logs = match fetch_transfer_logs(&provider, &params).await {
-        Ok(logs) => logs,
+    let contract_str = config.contract_address.clone();
+    let total_chunks = transfer_checkpoint::count_chunks(from_block, end_blk, chunk_size);
+
+    let fetch_progress = match transfer_checkpoint::load_fetch_progress(
+        out_dir,
+        chain,
+        &contract_str,
+        from_block,
+        end_blk,
+        chunk_size,
+    ) {
+        Ok(p) => p,
         Err(e) => {
-            let msg = format!("eth_getLogs failed: {e:#}");
-            eprintln!("[{}] {msg}", chain.to_uppercase());
-            errors.push(msg);
-            let supply = SupplyAuditRow {
-                chain: chain.to_string(),
-                chain_id: config.chain_id,
-                contract_address: config.contract_address.clone(),
+            errors.push(format!("fetch checkpoint: {e:#}"));
+            hard_error = true;
+            let supply = partial_supply_after_fetch_fail(
+                chain,
+                &config,
                 from_block,
-                resolved_to_block: Some(end_blk),
-                to_block_requested: to_block_raw.to_string(),
+                end_blk,
+                to_block_raw,
                 chunk_size,
-                transfer_event_count: 0,
-                active_senders: 0,
-                active_recipients: 0,
-                mint_count: 0,
-                burn_count: 0,
-                plain_transfer_count: 0,
-                sum_mints_raw: "0".into(),
-                sum_burns_raw: "0".into(),
-                net_mint_raw: None,
-                total_supply_at_start_minus_1: supply_start.map(|u| format_token_amount(u, effective_decimals)),
-                total_supply_at_start_minus_1_provenance: supply_start_provenance.clone(),
-                total_supply_at_end: supply_end.map(|u| format_token_amount(u, effective_decimals)),
-                onchain_delta_raw: None,
-                discrepancy_raw: None,
                 metadata_call_pass,
                 historical_supply_pass,
-                no_duplicate_logs_pass: None,
-                transfer_decode_pass: None,
-                supply_invariant_pass: None,
-                duplicate_count: 0,
-                full_decode_error_count: 0,
-                window_start_block_timestamp_rfc3339: win_start_ts.clone(),
-                window_end_block_timestamp_rfc3339: win_end_ts.clone(),
-            };
+                &supply_start,
+                &supply_start_provenance,
+                &supply_end,
+                effective_decimals,
+                &win_start_ts,
+                &win_end_ts,
+            );
             let qa = build_qa_chain(&supply, generated_at, &errors);
-            return (empty_events, supply, qa, true);
+            return (empty_events, supply, qa, hard_error);
         }
     };
 
-    let raw_count = raw_logs.len();
-    println!("[{}] received {} raw logs", chain.to_uppercase(), raw_count);
-
-    let contract_str = config.contract_address.clone();
-    let (_qa_n, _qa_fails, qa_errors) = sample_decode_qa(
-        &raw_logs,
-        chain,
-        &contract_str,
-        decimals_for_decode,
-        QA_SAMPLE_SIZE,
-    );
-    for e in qa_errors {
-        errors.push(format!("decode QA: {e}"));
+    if fetch_progress.is_none()
+        && transfer_checkpoint::fetch_partial_path(out_dir, chain).exists()
+    {
+        transfer_checkpoint::clear_chain_fetch_progress(out_dir, chain).ok();
     }
 
-    let mut events = Vec::with_capacity(raw_count);
-    let mut decode_errors = 0usize;
-    for log in &raw_logs {
-        match decode_transfer_log(log, chain, &contract_str, decimals_for_decode) {
-            Ok(ev) => events.push(ev),
+    let fetch_already_done = fetch_progress
+        .as_ref()
+        .is_some_and(|p| p.is_complete());
+
+    let mut events = if fetch_already_done {
+        match transfer_checkpoint::load_fetch_partial_events(out_dir, chain) {
+            Ok(e) => e,
             Err(e) => {
-                decode_errors += 1;
-                if decode_errors <= 5 {
-                    errors.push(format!("decode: {e:#}"));
-                }
+                errors.push(format!("load partial transfers: {e:#}"));
+                hard_error = true;
+                Vec::new()
             }
         }
+    } else if let Some(ref p) = fetch_progress {
+        match transfer_checkpoint::load_fetch_partial_events(out_dir, chain) {
+            Ok(e) => {
+                println!(
+                    "[{}] resuming log fetch from block {} (chunk {}/{})",
+                    chain.to_uppercase(),
+                    p.resume_from_block(),
+                    p.chunks_done,
+                    p.total_chunks
+                );
+                e
+            }
+            Err(e) => {
+                errors.push(format!("load partial transfers: {e:#}"));
+                hard_error = true;
+                Vec::new()
+            }
+        }
+    } else {
+        println!(
+            "[{}] fetching Transfer logs block {} → {} (chunk {}, {} chunks)",
+            chain.to_uppercase(),
+            from_block,
+            end_blk,
+            chunk_size,
+            total_chunks
+        );
+        Vec::new()
+    };
+
+    if hard_error && events.is_empty() {
+        let supply = partial_supply_after_fetch_fail(
+            chain,
+            &config,
+            from_block,
+            end_blk,
+            to_block_raw,
+            chunk_size,
+            metadata_call_pass,
+            historical_supply_pass,
+            &supply_start,
+            &supply_start_provenance,
+            &supply_end,
+            effective_decimals,
+            &win_start_ts,
+            &win_end_ts,
+        );
+        let qa = build_qa_chain(&supply, generated_at, &errors);
+        return (empty_events, supply, qa, true);
     }
+
+    let resume_from = fetch_progress
+        .as_ref()
+        .filter(|p| !p.is_complete())
+        .map(|p| p.resume_from_block())
+        .unwrap_or(from_block);
+
+    let mut logs_fetched: usize = fetch_progress
+        .as_ref()
+        .map(|p| p.logs_fetched)
+        .unwrap_or(0);
+    let mut decode_errors = 0usize;
+    let mut qa_sample_done = fetch_already_done || fetch_progress.is_some();
+
+    if !fetch_already_done && !hard_error {
+        let chain_upper = chain.to_uppercase();
+        let out_owned = out_dir.to_path_buf();
+        let chain_owned = chain.to_string();
+
+        let fetch_result = fetch_transfer_logs_incremental(
+            &provider,
+            &params,
+            resume_from,
+            |start, end, chunks_done, total_chunks, logs| {
+                println!(
+                    "[{}] fetch chunk {}/{} blocks {}..{} ({} logs)",
+                    chain_upper,
+                    chunks_done,
+                    total_chunks,
+                    start,
+                    end,
+                    logs.len()
+                );
+
+                if !qa_sample_done && !logs.is_empty() {
+                    let (_qa_n, _qa_fails, qa_errors) = sample_decode_qa(
+                        logs,
+                        &chain_owned,
+                        &contract_str,
+                        decimals_for_decode,
+                        QA_SAMPLE_SIZE,
+                    );
+                    for e in qa_errors {
+                        errors.push(format!("decode QA: {e}"));
+                    }
+                    qa_sample_done = true;
+                }
+
+                let mut chunk_events = Vec::with_capacity(logs.len());
+                for log in logs {
+                    match decode_transfer_log(
+                        log,
+                        &chain_owned,
+                        &contract_str,
+                        decimals_for_decode,
+                    ) {
+                        Ok(ev) => chunk_events.push(ev),
+                        Err(e) => {
+                            decode_errors += 1;
+                            if decode_errors <= 5 {
+                                errors.push(format!("decode: {e:#}"));
+                            }
+                        }
+                    }
+                }
+
+                transfer_checkpoint::append_fetch_partial_events(
+                    &out_owned,
+                    &chain_owned,
+                    &chunk_events,
+                )?;
+                events.extend(chunk_events);
+                logs_fetched += logs.len();
+
+                let progress = FetchChunkProgress {
+                    schema: FetchChunkProgress::SCHEMA.to_string(),
+                    chain: chain_owned.clone(),
+                    contract_address: contract_str.clone(),
+                    from_block,
+                    to_block: end_blk,
+                    chunk_size,
+                    last_fetched_through: end,
+                    chunks_done,
+                    total_chunks,
+                    logs_fetched,
+                };
+                transfer_checkpoint::save_fetch_progress(&out_owned, &progress)?;
+                Ok(())
+            },
+        )
+        .await;
+
+        if let Err(e) = fetch_result {
+            let msg = format!("eth_getLogs failed: {e:#}");
+            eprintln!("[{}] {msg}", chain.to_uppercase());
+            errors.push(msg);
+            let supply = partial_supply_after_fetch_fail(
+                chain,
+                &config,
+                from_block,
+                end_blk,
+                to_block_raw,
+                chunk_size,
+                metadata_call_pass,
+                historical_supply_pass,
+                &supply_start,
+                &supply_start_provenance,
+                &supply_end,
+                effective_decimals,
+                &win_start_ts,
+                &win_end_ts,
+            );
+            let qa = build_qa_chain(&supply, generated_at, &errors);
+            return (empty_events, supply, qa, true);
+        }
+    }
+
+    let raw_count = logs_fetched;
+    println!(
+        "[{}] received {} raw logs ({} decoded rows before dedup)",
+        chain.to_uppercase(),
+        raw_count,
+        events.len()
+    );
+
     if decode_errors > 5 {
         errors.push(format!(
             "... and {} more decode errors",
@@ -1040,6 +1338,57 @@ async fn process_chain(
     let qa = build_qa_chain(&supply, generated_at, &errors);
 
     (deduped, supply, qa, hard_error)
+}
+
+fn partial_supply_after_fetch_fail(
+    chain: &str,
+    config: &TokenConfig,
+    from_block: u64,
+    end_blk: u64,
+    to_block_raw: &str,
+    chunk_size: u64,
+    metadata_call_pass: bool,
+    historical_supply_pass: bool,
+    supply_start: &Option<U256>,
+    supply_start_provenance: &str,
+    supply_end: &Option<U256>,
+    effective_decimals: u8,
+    win_start_ts: &Option<String>,
+    win_end_ts: &Option<String>,
+) -> SupplyAuditRow {
+    SupplyAuditRow {
+        chain: chain.to_string(),
+        chain_id: config.chain_id,
+        contract_address: config.contract_address.clone(),
+        from_block,
+        resolved_to_block: Some(end_blk),
+        to_block_requested: to_block_raw.to_string(),
+        chunk_size,
+        transfer_event_count: 0,
+        active_senders: 0,
+        active_recipients: 0,
+        mint_count: 0,
+        burn_count: 0,
+        plain_transfer_count: 0,
+        sum_mints_raw: "0".into(),
+        sum_burns_raw: "0".into(),
+        net_mint_raw: None,
+        total_supply_at_start_minus_1: supply_start
+            .map(|u| format_token_amount(u, effective_decimals)),
+        total_supply_at_start_minus_1_provenance: supply_start_provenance.to_string(),
+        total_supply_at_end: supply_end.map(|u| format_token_amount(u, effective_decimals)),
+        onchain_delta_raw: None,
+        discrepancy_raw: None,
+        metadata_call_pass,
+        historical_supply_pass,
+        no_duplicate_logs_pass: None,
+        transfer_decode_pass: None,
+        supply_invariant_pass: None,
+        duplicate_count: 0,
+        full_decode_error_count: 0,
+        window_start_block_timestamp_rfc3339: win_start_ts.clone(),
+        window_end_block_timestamp_rfc3339: win_end_ts.clone(),
+    }
 }
 
 fn failed_supply_row(

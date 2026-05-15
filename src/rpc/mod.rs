@@ -1,6 +1,7 @@
 pub mod metadata;
 pub mod resolve_window;
 pub mod transfer_audit;
+pub mod transfer_checkpoint;
 #[cfg(feature = "experimental")]
 pub mod fetch_logs;
 #[cfg(feature = "experimental")]
