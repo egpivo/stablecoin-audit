@@ -26,3 +26,4 @@ target
 # stablecoin-audit specific
 .env
 out/
+.cursor/
