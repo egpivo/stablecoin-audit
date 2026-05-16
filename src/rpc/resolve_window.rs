@@ -99,7 +99,8 @@ fn fmt_ts(ts: u64) -> String {
         .unwrap_or_else(|| format!("unix_{ts}"))
 }
 
-pub async fn run(asset: &str, chains: &[String], from_s: &str, to_s: &str) -> Result<()> {
+/// Parse and validate UTC bounds; returns unix seconds for block search.
+pub(crate) fn validate_window_bounds(from_s: &str, to_s: &str) -> Result<(u64, u64)> {
     let from_dt = parse_rfc3339_utc(from_s).context("parse --from")?;
     let to_dt = parse_rfc3339_utc(to_s).context("parse --to")?;
     if from_dt >= to_dt {
@@ -110,8 +111,13 @@ pub async fn run(asset: &str, chains: &[String], from_s: &str, to_s: &str) -> Re
     if from_sec < 0 || to_sec < 0 {
         anyhow::bail!("only non-negative unix times are supported for block headers");
     }
-    let from_u = from_sec as u64;
-    let to_u = to_sec as u64;
+    Ok((from_sec as u64, to_sec as u64))
+}
+
+pub async fn run(asset: &str, chains: &[String], from_s: &str, to_s: &str) -> Result<()> {
+    let (from_u, to_u) = validate_window_bounds(from_s, to_s)?;
+    let from_dt = parse_rfc3339_utc(from_s).context("parse --from")?;
+    let to_dt = parse_rfc3339_utc(to_s).context("parse --to")?;
 
     println!(
         "# Resolved wall-clock window (UTC): {} → {}",
@@ -180,11 +186,39 @@ pub async fn run(asset: &str, chains: &[String], from_s: &str, to_s: &str) -> Re
 
 #[cfg(test)]
 mod tests {
-    use super::parse_rfc3339_utc;
+    use super::{fmt_ts, parse_rfc3339_utc};
 
     #[test]
     fn parse_from_z() {
         let d = parse_rfc3339_utc("2026-05-01T00:00:00Z").unwrap();
         assert_eq!(d.date_naive().to_string(), "2026-05-01");
+    }
+
+    #[test]
+    fn parse_rfc3339_with_offset() {
+        let d = parse_rfc3339_utc("2026-05-01T00:00:00+00:00").unwrap();
+        assert_eq!(d.date_naive().to_string(), "2026-05-01");
+    }
+
+    #[test]
+    fn parse_rejects_garbage() {
+        assert!(parse_rfc3339_utc("not-a-date").is_err());
+    }
+
+    #[test]
+    fn fmt_ts_emits_utc_rfc3339() {
+        let d = parse_rfc3339_utc("2026-05-01T00:00:00Z").unwrap();
+        assert_eq!(fmt_ts(d.timestamp() as u64), d.to_rfc3339_opts(chrono::SecondsFormat::Secs, true));
+    }
+
+    #[test]
+    fn validate_window_bounds_ok() {
+        let (a, b) = super::validate_window_bounds("2026-05-01T00:00:00Z", "2026-05-08T00:00:00Z").unwrap();
+        assert!(b > a);
+    }
+
+    #[test]
+    fn validate_window_rejects_inverted() {
+        assert!(super::validate_window_bounds("2026-05-08T00:00:00Z", "2026-05-01T00:00:00Z").is_err());
     }
 }

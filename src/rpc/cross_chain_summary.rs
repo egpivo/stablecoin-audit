@@ -206,7 +206,7 @@ fn to_block_requested_consistent(provenance: &str, supply: &str) -> bool {
     }
 }
 
-fn load_supply_csv(path: &Path) -> Result<HashMap<String, SupplyAuditRow>> {
+pub(crate) fn load_supply_csv(path: &Path) -> Result<HashMap<String, SupplyAuditRow>> {
     let mut rdr = csv::Reader::from_path(path)?;
     let mut m = HashMap::new();
     for res in rdr.deserialize::<SupplyAuditRow>() {
@@ -362,7 +362,7 @@ block numbers and window lengths are not assumed equal across chains. The signed
     Ok((summaries, sum_str, warnings))
 }
 
-fn write_markdown(path: &Path, summary: &CrossChainSummary) -> Result<()> {
+pub(crate) fn write_markdown(path: &Path, summary: &CrossChainSummary) -> Result<()> {
     let mut md = String::new();
     md.push_str(&format!(
         "# Cross-chain window summary — {}\n\n",
@@ -513,7 +513,8 @@ pub fn run(asset: &str, run_id: &str) -> Result<()> {
 
 #[cfg(test)]
 mod tests {
-    use super::to_block_requested_consistent;
+    use super::*;
+    use std::collections::HashMap;
 
     #[test]
     fn to_block_req_latest_case_insensitive() {
@@ -528,5 +529,171 @@ mod tests {
     #[test]
     fn to_block_req_mismatch() {
         assert!(!to_block_requested_consistent("100", "101"));
+    }
+
+    #[test]
+    fn addr_eq_ignores_case_and_prefix() {
+        assert!(addr_eq("0xAbC", "abc"));
+        assert!(!addr_eq("0xabc", "0xabd"));
+    }
+
+    #[test]
+    fn norm_asset_uppercases() {
+        assert_eq!(norm_asset(" usdc "), "USDC");
+    }
+
+    fn gate_pass() -> QaGatesSnapshot {
+        QaGatesSnapshot {
+            metadata_call_pass: "PASS".into(),
+            historical_supply_pass: "PASS".into(),
+            no_duplicate_logs_pass: "PASS".into(),
+            transfer_decode_pass: "PASS".into(),
+            supply_invariant_pass: "PASS".into(),
+            provenance_stamped: "PASS".into(),
+        }
+    }
+
+    fn sample_supply_row(chain: &str, from: u64, to: u64, delta: &str) -> SupplyAuditRow {
+        SupplyAuditRow {
+            chain: chain.into(),
+            chain_id: if chain == "ethereum" { 1 } else { 8453 },
+            contract_address: format!("0x{chain}"),
+            from_block: from,
+            resolved_to_block: Some(to),
+            to_block_requested: to.to_string(),
+            chunk_size: 500,
+            transfer_event_count: 10,
+            active_senders: 1,
+            active_recipients: 1,
+            mint_count: 1,
+            burn_count: 0,
+            plain_transfer_count: 9,
+            sum_mints_raw: "0".into(),
+            sum_burns_raw: "0".into(),
+            net_mint_raw: Some(delta.into()),
+            total_supply_at_start_minus_1: None,
+            total_supply_at_start_minus_1_provenance: "on-chain".into(),
+            total_supply_at_end: None,
+            onchain_delta_raw: Some(delta.into()),
+            discrepancy_raw: Some("0".into()),
+            metadata_call_pass: true,
+            historical_supply_pass: true,
+            no_duplicate_logs_pass: Some(true),
+            transfer_decode_pass: Some(true),
+            supply_invariant_pass: Some(true),
+            duplicate_count: 0,
+            full_decode_error_count: 0,
+        }
+    }
+
+    fn sample_qa_chain(chain: &str, from: u64, to: u64) -> QaChainFile {
+        QaChainFile {
+            chain: chain.into(),
+            chain_id: if chain == "ethereum" { 1 } else { 8453 },
+            contract_address: format!("0x{chain}"),
+            from_block: from,
+            resolved_to_block: Some(to),
+            gates: gate_pass(),
+        }
+    }
+
+    #[test]
+    fn validate_and_build_sums_deltas() {
+        let qa = QaReportFile {
+            asset: "USDC".into(),
+            generated_at: "t".into(),
+            run_id: Some("run1".into()),
+            provenance: QaProvenanceBlock {
+                from_block: 100,
+                to_block_requested: Some("200".into()),
+                generated_at: "t".into(),
+                per_chain_spans: false,
+            },
+            chains: vec![
+                sample_qa_chain("ethereum", 100, 200),
+                sample_qa_chain("base", 100, 200),
+            ],
+        };
+        let mut supply = HashMap::new();
+        supply.insert("ethereum".into(), sample_supply_row("ethereum", 100, 200, "1000"));
+        supply.insert("base".into(), sample_supply_row("base", 100, 200, "-500"));
+
+        let (_, sum, warnings) = validate_and_build("usdc", "run1", &qa, &supply).unwrap();
+        assert_eq!(sum.as_deref(), Some("500"));
+        assert!(!warnings.is_empty());
+    }
+
+    #[test]
+    fn validate_and_build_rejects_single_chain() {
+        let qa = QaReportFile {
+            asset: "USDC".into(),
+            generated_at: "t".into(),
+            run_id: None,
+            provenance: QaProvenanceBlock {
+                from_block: 1,
+                to_block_requested: Some("2".into()),
+                generated_at: "t".into(),
+                per_chain_spans: false,
+            },
+            chains: vec![sample_qa_chain("ethereum", 1, 2)],
+        };
+        let mut supply = HashMap::new();
+        supply.insert("ethereum".into(), sample_supply_row("ethereum", 1, 2, "0"));
+        assert!(validate_and_build("USDC", "x", &qa, &supply).is_err());
+    }
+
+    #[test]
+    fn load_supply_csv_from_benchmark_fixture() {
+        let path = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+            .join("docs/benchmarks/usdc_7d_20260501_20260508/supply_audit.csv");
+        let m = load_supply_csv(&path).unwrap();
+        assert_eq!(m.len(), 3);
+        assert!(m.contains_key("ethereum"));
+    }
+
+    #[test]
+    fn validate_provenance_window_rejects_mismatch() {
+        let qa = QaReportFile {
+            asset: "USDC".into(),
+            generated_at: "t".into(),
+            run_id: None,
+            provenance: QaProvenanceBlock {
+                from_block: 100,
+                to_block_requested: Some("200".into()),
+                generated_at: "t".into(),
+                per_chain_spans: false,
+            },
+            chains: vec![
+                sample_qa_chain("ethereum", 100, 200),
+                sample_qa_chain("base", 100, 200),
+            ],
+        };
+        let mut supply = HashMap::new();
+        supply.insert("ethereum".into(), sample_supply_row("ethereum", 99, 200, "0"));
+        supply.insert("base".into(), sample_supply_row("base", 100, 200, "0"));
+        assert!(validate_provenance_window(&qa, &supply).is_err());
+    }
+
+    #[test]
+    fn validate_provenance_skips_when_per_chain_spans() {
+        let qa = QaReportFile {
+            asset: "USDC".into(),
+            generated_at: "t".into(),
+            run_id: None,
+            provenance: QaProvenanceBlock {
+                from_block: 1,
+                to_block_requested: Some("per_chain".into()),
+                generated_at: "t".into(),
+                per_chain_spans: true,
+            },
+            chains: vec![
+                sample_qa_chain("ethereum", 10, 20),
+                sample_qa_chain("base", 30, 40),
+            ],
+        };
+        let mut supply = HashMap::new();
+        supply.insert("ethereum".into(), sample_supply_row("ethereum", 10, 20, "1"));
+        supply.insert("base".into(), sample_supply_row("base", 30, 40, "2"));
+        validate_provenance_window(&qa, &supply).unwrap();
     }
 }

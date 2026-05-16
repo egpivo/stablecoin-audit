@@ -47,3 +47,39 @@ pub fn load_single_token_config(asset: &str, chain: &str) -> Result<TokenConfig>
     ));
     TokenConfig::load(&path).with_context(|| format!("loading config {}", path.display()))
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn load_usdc_ethereum_config() {
+        let cfg = load_single_token_config("USDC", "ethereum").unwrap();
+        assert_eq!(cfg.chain, "ethereum");
+        assert_eq!(cfg.chain_id, 1);
+        assert_eq!(cfg.decimals, 6);
+        assert!(cfg.contract_address.starts_with("0x"));
+    }
+
+    #[test]
+    fn rejects_invalid_asset_chars() {
+        assert!(load_single_token_config("../evil", "ethereum").is_err());
+    }
+
+    #[test]
+    fn rejects_empty_chain() {
+        assert!(load_single_token_config("USDC", "").is_err());
+    }
+
+    #[test]
+    fn rpc_url_errors_when_env_missing() {
+        let cfg = load_single_token_config("USDC", "ethereum").unwrap();
+        let key = cfg.rpc_url_env.clone();
+        let saved = std::env::var(&key).ok();
+        std::env::remove_var(&key);
+        assert!(cfg.rpc_url().is_err());
+        if let Some(v) = saved {
+            std::env::set_var(&key, v);
+        }
+    }
+}

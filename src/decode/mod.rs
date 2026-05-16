@@ -215,4 +215,43 @@ mod tests {
         let result = sample_decode_qa(&[], "ethereum", "0x0", 6, 0);
         assert_eq!(result, (0, 0, vec![]));
     }
+
+    #[test]
+    fn decode_mint_burn_and_transfer_kinds() {
+        use alloy::primitives::{Address, B256, LogData};
+        use alloy::rpc::types::Log;
+        use alloy::sol_types::SolEvent;
+
+        let contract: Address = "0xA0b86991c6218b36c1d19D4a2e9Eb0cE3606eB48"
+            .parse()
+            .unwrap();
+        let recipient = Address::repeat_byte(0x11);
+        let sender = Address::repeat_byte(0x22);
+
+        let make_log = |from: Address, to: Address| -> Log {
+            let ev = Transfer { from, to, value: U256::from(1_000_000u64) };
+            let encoded = ev.encode_log_data();
+            Log {
+                inner: alloy::primitives::Log {
+                    address: contract,
+                    data: LogData::new_unchecked(encoded.topics().to_vec(), encoded.data),
+                },
+                block_number: Some(42),
+                transaction_hash: Some(B256::repeat_byte(0xaa)),
+                log_index: Some(0),
+                ..Default::default()
+            }
+        };
+
+        let mint = decode_transfer_log(&make_log(Address::ZERO, recipient), "ethereum", &format!("{contract:#x}"), 6).unwrap();
+        assert_eq!(mint.kind, "mint");
+        assert_eq!(mint.value_decimal, "1.000000");
+
+        let burn = decode_transfer_log(&make_log(sender, Address::ZERO), "ethereum", &format!("{contract:#x}"), 6).unwrap();
+        assert_eq!(burn.kind, "burn");
+
+        let xfer = decode_transfer_log(&make_log(sender, recipient), "ethereum", &format!("{contract:#x}"), 6).unwrap();
+        assert_eq!(xfer.kind, "transfer");
+        assert_eq!(xfer.block_number, 42);
+    }
 }

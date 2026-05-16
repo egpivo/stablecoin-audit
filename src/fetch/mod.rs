@@ -116,9 +116,65 @@ async fn fetch_logs_with_retry<T: Transport + Clone>(
     Err(last_err.unwrap_or_else(|| anyhow::anyhow!("eth_getLogs failed with no error detail")))
 }
 
-fn count_chunks(from_block: u64, to_block: u64, chunk_size: u64) -> u64 {
+pub(crate) fn count_chunks(from_block: u64, to_block: u64, chunk_size: u64) -> u64 {
     if to_block < from_block || chunk_size == 0 {
         return 0;
     }
     (to_block - from_block + 1).div_ceil(chunk_size)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use alloy::primitives::Address;
+
+    #[test]
+    fn count_chunks_matches_checkpoint() {
+        assert_eq!(count_chunks(100, 599, 500), 1);
+        assert_eq!(
+            count_chunks(100, 600, 500),
+            crate::rpc::transfer_checkpoint::count_chunks(100, 600, 500)
+        );
+    }
+
+    #[tokio::test]
+    async fn incremental_noop_when_resume_past_end() {
+        let provider = crate::rpc::build_provider("http://127.0.0.1:1").unwrap();
+        let params = FetchParams {
+            contract_address: Address::ZERO,
+            from_block: 100,
+            to_block: 200,
+            chunk_size: 50,
+        };
+        fetch_transfer_logs_incremental(&provider, &params, 500, |_, _, _, _, _| Ok(()))
+            .await
+            .unwrap();
+    }
+
+    #[tokio::test]
+    async fn incremental_rejects_zero_chunk() {
+        let provider = crate::rpc::build_provider("http://127.0.0.1:1").unwrap();
+        let params = FetchParams {
+            contract_address: Address::ZERO,
+            from_block: 1,
+            to_block: 10,
+            chunk_size: 0,
+        };
+        assert!(fetch_transfer_logs_incremental(&provider, &params, 1, |_, _, _, _, _| Ok(()))
+            .await
+            .is_err());
+    }
+
+    #[tokio::test]
+    async fn fetch_transfer_logs_empty_range() {
+        let provider = crate::rpc::build_provider("http://127.0.0.1:1").unwrap();
+        let params = FetchParams {
+            contract_address: Address::ZERO,
+            from_block: 100,
+            to_block: 50,
+            chunk_size: 10,
+        };
+        let logs = fetch_transfer_logs(&provider, &params).await.unwrap();
+        assert!(logs.is_empty());
+    }
 }

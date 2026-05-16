@@ -157,4 +157,25 @@ mod tests {
     fn ensure_out_dir_rejects_empty() {
         assert!(ensure_out_dir("").is_err());
     }
+
+    #[test]
+    fn ensure_run_out_dir_creates_nested_path() {
+        let run_id = format!("test_run_{}", std::process::id());
+        let dir = ensure_run_out_dir("USDC", &run_id).unwrap();
+        assert!(dir.ends_with(format!("out/usdc/runs/{run_id}")));
+        assert!(dir.is_dir());
+        let _ = std::fs::remove_dir_all(dir.parent().unwrap().parent().unwrap());
+    }
+
+    #[test]
+    fn default_run_id_is_filesystem_safe() {
+        let id = default_run_id();
+        validate_run_id(&id).unwrap();
+        assert!(id.contains('T'));
+    }
+
+    #[test]
+    fn validate_run_id_rejects_dot() {
+        assert!(validate_run_id(".").is_err());
+    }
 }

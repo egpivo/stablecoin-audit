@@ -4,6 +4,10 @@ version = "0.1.0"
 edition = "2021"
 description = "Windowed supply-invariant audits and chain-level comparison for stablecoin deployments on EVM chains (v0.1 core; optional experimental fetch/control surfaces)"
 
+[lib]
+name = "stablecoin_audit"
+path = "src/lib.rs"
+
 [[bin]]
 name = "stablecoin-audit"
 path = "src/main.rs"
@@ -24,3 +28,9 @@ clap = { version = "4", features = ["derive"] }
 anyhow = "1"
 csv = "1"
 chrono = { version = "0.4", features = ["serde"] }
+
+[dev-dependencies]
+wiremock = "0.6"
+
+[package.metadata.cargo-llvm-cov]
+exclude = ["src/main.rs"]

@@ -57,7 +57,7 @@ struct MetadataReport {
 
 // Build a fully-failed ChainMetadata when a TokenConfig is available but a later
 // step (env lookup, provider init, address parse) failed before any RPC calls.
-fn build_failed_chain(
+pub(crate) fn build_failed_chain(
     config: &TokenConfig,
     from_block: u64,
     to_block: Option<u64>,
@@ -91,7 +91,7 @@ fn build_failed_chain(
 
 // Build a fully-failed ChainMetadata when config loading itself failed,
 // so no TokenConfig fields are available.
-fn build_config_failed_chain(
+pub(crate) fn build_config_failed_chain(
     chain: &str,
     from_block: u64,
     to_block: Option<u64>,
@@ -397,7 +397,7 @@ pub async fn run(
     Ok(())
 }
 
-fn print_chain_summary(
+pub(crate) fn print_chain_summary(
     cm: &ChainMetadata,
     supply_live: Option<U256>,
     supply_start: Option<U256>,
@@ -464,6 +464,66 @@ fn print_chain_summary(
         println!("  Errors:");
         for e in &cm.errors {
             println!("    - {e}");
+        }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use alloy::primitives::U256;
+
+    #[test]
+    fn build_failed_chain_sets_skip_note() {
+        let cfg = crate::config::load_single_token_config("USDC", "ethereum").unwrap();
+        let cm = build_failed_chain(&cfg, 100, Some(200), vec!["rpc down".into()], "test");
+        assert!(!cm.metadata_call_pass);
+        assert!(cm.total_supply_live_probe_note.contains("skipped"));
+    }
+
+    #[test]
+    fn build_config_failed_chain_unknown_contract() {
+        let cm = build_config_failed_chain("badchain", 1, None, vec!["x".into()]);
+        assert_eq!(cm.contract_address, "unknown");
+        assert_eq!(cm.chain_id, 0);
+    }
+
+    #[test]
+    fn print_chain_summary_runs() {
+        let cfg = crate::config::load_single_token_config("USDC", "ethereum").unwrap();
+        let cm = build_failed_chain(&cfg, 100, Some(200), vec![], "test");
+        print_chain_summary(
+            &cm,
+            Some(U256::from(1_000_000u64)),
+            Some(U256::ZERO),
+            Some(U256::from(2_000_000u64)),
+            6,
+            &Some("USDC".into()),
+            "on-chain",
+        );
+    }
+
+    #[tokio::test]
+    async fn metadata_run_partial_on_bad_chain() {
+        let err = run("USDC", &["not_a_chain_xyz".into()], 100, Some(200)).await;
+        assert!(err.is_err());
+        let path = crate::report::ensure_out_dir("USDC").unwrap().join("metadata.json");
+        assert!(path.is_file());
+        let _ = std::fs::remove_file(&path);
+    }
+
+    #[tokio::test]
+    async fn metadata_run_unreachable_rpc() {
+        let _lock = crate::rpc::RPC_ENV_LOCK.lock().unwrap();
+        let key = "ALCHEMY_ETHEREUM_URL";
+        let saved = std::env::var(key).ok();
+        std::env::set_var(key, "http://127.0.0.1:1");
+        let err = run("USDC", &["ethereum".into()], 24_000_000, Some(24_001_000)).await;
+        assert!(err.is_err());
+        if let Some(v) = saved {
+            std::env::set_var(key, v);
+        } else {
+            std::env::remove_var(key);
         }
     }
 }

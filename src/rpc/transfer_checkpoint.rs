@@ -351,3 +351,188 @@ pub fn count_chunks(from_block: u64, to_block: u64, chunk_size: u64) -> u64 {
     let span = to_block - from_block + 1;
     span.div_ceil(chunk_size)
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use alloy::primitives::U256;
+    use crate::decode::TransferEvent;
+    use std::path::PathBuf;
+
+    fn tmp_out(suffix: &str) -> PathBuf {
+        let p = std::env::temp_dir().join(format!(
+            "stablecoin_audit_cp_{}_{suffix}",
+            std::process::id()
+        ));
+        let _ = std::fs::remove_dir_all(&p);
+        p
+    }
+
+    fn sample_event(chain: &str) -> TransferEvent {
+        TransferEvent {
+            chain: chain.into(),
+            contract_address: "0xabc".into(),
+            block_number: 10,
+            tx_hash: "0xtx".into(),
+            log_index: 0,
+            from: "0x0".into(),
+            to: "0x1".into(),
+            value_raw: "1".into(),
+            value_decimal: "0.000001".into(),
+            kind: "transfer".into(),
+            value_u256: U256::from(1u64),
+        }
+    }
+
+    fn sample_bundle(chain: &str) -> CheckpointChainBundle {
+        let json = format!(
+            r#"{{
+              "supply": {{
+                "chain": "{chain}",
+                "chain_id": 1,
+                "contract_address": "0xabc",
+                "from_block": 100,
+                "resolved_to_block": 200,
+                "to_block_requested": "200",
+                "chunk_size": 500,
+                "transfer_event_count": 1,
+                "active_senders": 1,
+                "active_recipients": 1,
+                "mint_count": 0,
+                "burn_count": 0,
+                "plain_transfer_count": 1,
+                "sum_mints_raw": "0",
+                "sum_burns_raw": "0",
+                "total_supply_at_start_minus_1_provenance": "on-chain",
+                "metadata_call_pass": true,
+                "historical_supply_pass": true,
+                "duplicate_count": 0,
+                "full_decode_error_count": 0
+              }},
+              "qa": {{
+                "chain": "{chain}",
+                "chain_id": 1,
+                "contract_address": "0xabc",
+                "from_block": 100,
+                "resolved_to_block": 200,
+                "gates": {{
+                  "metadata_call_pass": "PASS",
+                  "historical_supply_pass": "PASS",
+                  "no_duplicate_logs_pass": "PASS",
+                  "transfer_decode_pass": "PASS",
+                  "supply_invariant_pass": "PASS",
+                  "provenance_stamped": "PASS"
+                }},
+                "duplicate_count": 0,
+                "full_decode_error_count": 0,
+                "errors": []
+              }}
+            }}"#
+        );
+        serde_json::from_str(&json).expect("test bundle json")
+    }
+
+    #[test]
+    fn count_chunks_single_and_multi() {
+        assert_eq!(count_chunks(100, 100, 500), 1);
+        assert_eq!(count_chunks(100, 599, 500), 1);
+        assert_eq!(count_chunks(100, 600, 500), 2);
+        assert_eq!(count_chunks(200, 100, 500), 0);
+        assert_eq!(count_chunks(100, 200, 0), 0);
+    }
+
+    #[test]
+    fn fetch_progress_resume_and_complete() {
+        let p = FetchChunkProgress {
+            schema: FetchChunkProgress::SCHEMA.into(),
+            chain: "ethereum".into(),
+            contract_address: "0xAbC".into(),
+            from_block: 1,
+            to_block: 1000,
+            chunk_size: 500,
+            last_fetched_through: 499,
+            chunks_done: 1,
+            total_chunks: 2,
+            logs_fetched: 10,
+        };
+        assert_eq!(p.resume_from_block(), 500);
+        assert!(!p.is_complete());
+        let done = FetchChunkProgress {
+            last_fetched_through: 1000,
+            ..p
+        };
+        assert!(done.is_complete());
+    }
+
+    #[test]
+    fn manifest_roundtrip_and_validate() {
+        let out = tmp_out("manifest");
+        let specs = vec![
+            ChainSpecRecord {
+                chain: "base".into(),
+                from_block: 10,
+                to_block_requested: "20".into(),
+            },
+            ChainSpecRecord {
+                chain: "ethereum".into(),
+                from_block: 100,
+                to_block_requested: "200".into(),
+            },
+        ];
+        let mut manifest = CheckpointManifest::new("usdc", "run_a", "2026-01-01T00:00:00Z", 500, true, specs.clone());
+        save_manifest(&out, &manifest).unwrap();
+        let loaded = load_manifest(&out).unwrap().expect("manifest exists");
+        validate_manifest_matches(&loaded, "USDC", "run_a", 500, true, &specs).unwrap();
+        assert!(validate_manifest_matches(&loaded, "USDC", "other", 500, true, &specs).is_err());
+        manifest.completed_chains.push("ethereum".into());
+        assert!(completed_set(&manifest).contains("ethereum"));
+        let _ = std::fs::remove_dir_all(&out);
+    }
+
+    #[test]
+    fn fetch_progress_addr_case_insensitive() {
+        let out = tmp_out("fetch_prog");
+        let progress = FetchChunkProgress {
+            schema: FetchChunkProgress::SCHEMA.into(),
+            chain: "ethereum".into(),
+            contract_address: "0xABCDEF".into(),
+            from_block: 1,
+            to_block: 10,
+            chunk_size: 5,
+            last_fetched_through: 5,
+            chunks_done: 1,
+            total_chunks: 2,
+            logs_fetched: 3,
+        };
+        save_fetch_progress(&out, &progress).unwrap();
+        let loaded = load_fetch_progress(&out, "ethereum", "0xabcdef", 1, 10, 5)
+            .unwrap()
+            .expect("progress");
+        assert_eq!(loaded.last_fetched_through, 5);
+        let _ = std::fs::remove_dir_all(&out);
+    }
+
+    #[test]
+    fn partial_events_append_and_load() {
+        let out = tmp_out("partial");
+        append_fetch_partial_events(&out, "base", &[sample_event("base")]).unwrap();
+        append_fetch_partial_events(&out, "base", &[sample_event("base")]).unwrap();
+        let rows = load_fetch_partial_events(&out, "base").unwrap();
+        assert_eq!(rows.len(), 2);
+        let _ = std::fs::remove_dir_all(&out);
+    }
+
+    #[test]
+    fn completed_chain_roundtrip() {
+        let out = tmp_out("completed");
+        let mut manifest = CheckpointManifest::new("usdc", "run_b", "t0", 500, false, vec![]);
+        let events = vec![sample_event("ethereum")];
+        let bundle = sample_bundle("ethereum");
+        save_completed_chain(&out, &mut manifest, "ethereum", &events, &bundle).unwrap();
+        let (loaded_events, _bundle) = load_completed_chain(&out, "ethereum").unwrap();
+        assert_eq!(loaded_events.len(), 1);
+        assert_eq!(loaded_events[0].chain, "ethereum");
+        assert!(manifest.completed_chains.contains(&"ethereum".to_string()));
+        let _ = std::fs::remove_dir_all(&out);
+    }
+}
