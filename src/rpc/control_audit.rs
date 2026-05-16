@@ -82,7 +82,12 @@ struct RowMetrics {
     control_decode_error_count: usize,
 }
 
-pub async fn run(asset: &str, chains: &[String], from_block: u64, to_block_raw: &str) -> Result<()> {
+pub async fn run(
+    asset: &str,
+    chains: &[String],
+    from_block: u64,
+    to_block_raw: &str,
+) -> Result<()> {
     let generated_at = Utc::now().to_rfc3339();
     let out_dir = ensure_out_dir(asset)?;
     let mut qa_rows = Vec::new();
@@ -92,11 +97,12 @@ pub async fn run(asset: &str, chains: &[String], from_block: u64, to_block_raw: 
     let requested_to = if to_block_raw.eq_ignore_ascii_case("latest") {
         None
     } else {
-        Some(
-            to_block_raw.parse::<u64>().map_err(|_| {
-                anyhow::anyhow!("--to-block must be a block number or latest, got {:?}", to_block_raw)
-            })?,
-        )
+        Some(to_block_raw.parse::<u64>().map_err(|_| {
+            anyhow::anyhow!(
+                "--to-block must be a block number or latest, got {:?}",
+                to_block_raw
+            )
+        })?)
     };
 
     for chain in chains {
@@ -140,7 +146,9 @@ pub async fn run(asset: &str, chains: &[String], from_block: u64, to_block_raw: 
                     ControlQaGates {
                         control_event_query_pass: "FAIL".into(),
                         control_decode_pass: "FAIL".into(),
-                        provenance_stamped_pass: gate(!generated_at.is_empty() && !rpc_provider_alias.is_empty()),
+                        provenance_stamped_pass: gate(
+                            !generated_at.is_empty() && !rpc_provider_alias.is_empty(),
+                        ),
                         no_simulated_data_pass: "PASS".into(),
                     },
                     errors.clone(),
@@ -164,7 +172,9 @@ pub async fn run(asset: &str, chains: &[String], from_block: u64, to_block_raw: 
                     ControlQaGates {
                         control_event_query_pass: "FAIL".into(),
                         control_decode_pass: "FAIL".into(),
-                        provenance_stamped_pass: gate(!generated_at.is_empty() && !rpc_provider_alias.is_empty()),
+                        provenance_stamped_pass: gate(
+                            !generated_at.is_empty() && !rpc_provider_alias.is_empty(),
+                        ),
                         no_simulated_data_pass: "PASS".into(),
                     },
                     errors.clone(),
@@ -190,7 +200,9 @@ pub async fn run(asset: &str, chains: &[String], from_block: u64, to_block_raw: 
                     ControlQaGates {
                         control_event_query_pass: "FAIL".into(),
                         control_decode_pass: "FAIL".into(),
-                        provenance_stamped_pass: gate(!generated_at.is_empty() && !rpc_provider_alias.is_empty()),
+                        provenance_stamped_pass: gate(
+                            !generated_at.is_empty() && !rpc_provider_alias.is_empty(),
+                        ),
                         no_simulated_data_pass: "PASS".into(),
                     },
                     errors.clone(),
@@ -210,7 +222,9 @@ pub async fn run(asset: &str, chains: &[String], from_block: u64, to_block_raw: 
                     ControlQaGates {
                         control_event_query_pass: "FAIL".into(),
                         control_decode_pass: "FAIL".into(),
-                        provenance_stamped_pass: gate(!generated_at.is_empty() && !rpc_provider_alias.is_empty()),
+                        provenance_stamped_pass: gate(
+                            !generated_at.is_empty() && !rpc_provider_alias.is_empty(),
+                        ),
                         no_simulated_data_pass: "PASS".into(),
                     },
                     errors.clone(),
@@ -243,7 +257,9 @@ pub async fn run(asset: &str, chains: &[String], from_block: u64, to_block_raw: 
                 ControlQaGates {
                     control_event_query_pass: "FAIL".into(),
                     control_decode_pass: "FAIL".into(),
-                    provenance_stamped_pass: gate(!generated_at.is_empty() && !rpc_provider_alias.is_empty()),
+                    provenance_stamped_pass: gate(
+                        !generated_at.is_empty() && !rpc_provider_alias.is_empty(),
+                    ),
                     no_simulated_data_pass: "PASS".into(),
                 },
                 errors.clone(),
@@ -267,7 +283,9 @@ pub async fn run(asset: &str, chains: &[String], from_block: u64, to_block_raw: 
                     ControlQaGates {
                         control_event_query_pass: "FAIL".into(),
                         control_decode_pass: "FAIL".into(),
-                        provenance_stamped_pass: gate(!generated_at.is_empty() && !rpc_provider_alias.is_empty()),
+                        provenance_stamped_pass: gate(
+                            !generated_at.is_empty() && !rpc_provider_alias.is_empty(),
+                        ),
                         no_simulated_data_pass: "PASS".into(),
                     },
                     errors.clone(),
@@ -277,7 +295,8 @@ pub async fn run(asset: &str, chains: &[String], from_block: u64, to_block_raw: 
             }
         };
 
-        let (events, status) = fetch_control_events(&provider, addr, from_block, to_block, chain).await;
+        let (events, status) =
+            fetch_control_events(&provider, addr, from_block, to_block, chain).await;
         let fetched_at = Utc::now().to_rfc3339();
         query_status = status;
         control_event_count = events.len();
@@ -322,10 +341,7 @@ pub async fn run(asset: &str, chains: &[String], from_block: u64, to_block_raw: 
             to_block: Some(to_block),
             fetched_at,
             generated_at: generated_at.clone(),
-            topics: KNOWN_SIGNATURES
-                .iter()
-                .map(|t| format!("{t:#x}"))
-                .collect(),
+            topics: KNOWN_SIGNATURES.iter().map(|t| format!("{t:#x}")).collect(),
             data_source: "onchain_rpc".into(),
             simulated_data: false,
         });
@@ -362,13 +378,20 @@ pub async fn run(asset: &str, chains: &[String], from_block: u64, to_block_raw: 
     );
 
     if any_hard_error {
-        anyhow::bail!("one or more chains had hard errors; partial control-audit outputs were written");
+        anyhow::bail!(
+            "one or more chains had hard errors; partial control-audit outputs were written"
+        );
     }
 
     Ok(())
 }
 
-fn failed_row(chain: &str, from_block: u64, to_block: Option<u64>, errors: Vec<String>) -> ChainControlQa {
+fn failed_row(
+    chain: &str,
+    from_block: u64,
+    to_block: Option<u64>,
+    errors: Vec<String>,
+) -> ChainControlQa {
     let base = RowBase {
         chain,
         chain_id: 0,
@@ -391,7 +414,12 @@ fn failed_row(chain: &str, from_block: u64, to_block: Option<u64>, errors: Vec<S
     build_row(base, metrics, gates, errors)
 }
 
-fn build_row(base: RowBase<'_>, metrics: RowMetrics, gates: ControlQaGates, errors: Vec<String>) -> ChainControlQa {
+fn build_row(
+    base: RowBase<'_>,
+    metrics: RowMetrics,
+    gates: ControlQaGates,
+    errors: Vec<String>,
+) -> ChainControlQa {
     ChainControlQa {
         chain: base.chain.to_string(),
         chain_id: base.chain_id,
@@ -408,7 +436,11 @@ fn build_row(base: RowBase<'_>, metrics: RowMetrics, gates: ControlQaGates, erro
 }
 
 fn gate(pass: bool) -> String {
-    if pass { "PASS".into() } else { "FAIL".into() }
+    if pass {
+        "PASS".into()
+    } else {
+        "FAIL".into()
+    }
 }
 
 fn write_control_events_csv(path: &std::path::Path, events: &[ControlEventRecord]) -> Result<()> {
@@ -460,7 +492,9 @@ fn write_control_risk_flags_md(
         if qs.starts_with("error") {
             md.push_str(&format!("- [WARN] Control event query failed: {qs}\n"));
         } else if qs == "unavailable" {
-            md.push_str("- [INFO] Control event query unavailable (chain did not complete RPC setup)\n");
+            md.push_str(
+                "- [INFO] Control event query unavailable (chain did not complete RPC setup)\n",
+            );
         } else if row.control_event_count == 0 {
             md.push_str("- [INFO] No issuer control events observed in this window\n");
         } else {
@@ -487,7 +521,9 @@ fn write_control_risk_flags_md(
                         }
                     }
                     Err(e) => {
-                        md.push_str(&format!("- [WARN] Could not read control_events CSV: {e:#}\n"));
+                        md.push_str(&format!(
+                            "- [WARN] Could not read control_events CSV: {e:#}\n"
+                        ));
                     }
                 }
             }
@@ -520,9 +556,14 @@ fn write_control_summary_md(
     report: &ControlQaReport,
 ) -> Result<()> {
     let mut md = String::new();
-    md.push_str(&format!("# {} v0.2 Control-Surface Summary\n\n", asset.to_uppercase()));
+    md.push_str(&format!(
+        "# {} v0.2 Control-Surface Summary\n\n",
+        asset.to_uppercase()
+    ));
     md.push_str(&format!("Generated at: {}\n\n", generated_at));
-    md.push_str("Scope: issuer-side control actions only (pause/blacklist/minter/admin/upgrade).\n");
+    md.push_str(
+        "Scope: issuer-side control actions only (pause/blacklist/minter/admin/upgrade).\n",
+    );
     md.push_str("Non-scope: wallet attribution, AML scoring, intent inference.\n\n");
     md.push_str("| Chain | Window | Control Events | Query | Decode | Provenance |\n");
     md.push_str("|---|---|---:|---|---|---|\n");
@@ -531,7 +572,9 @@ fn write_control_summary_md(
             "| {} | {} -> {} | {} | {} | {} | {} |\n",
             row.chain,
             row.from_block,
-            row.to_block.map(|v| v.to_string()).unwrap_or_else(|| "unavailable".into()),
+            row.to_block
+                .map(|v| v.to_string())
+                .unwrap_or_else(|| "unavailable".into()),
             row.control_event_count,
             row.gates.control_event_query_pass,
             row.gates.control_decode_pass,

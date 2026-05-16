@@ -121,7 +121,10 @@ pub fn clear_checkpoint_dir(out_dir: &Path) -> Result<()> {
 }
 
 pub fn clear_chain_fetch_progress(out_dir: &Path, chain: &str) -> Result<()> {
-    for p in [fetch_progress_path(out_dir, chain), fetch_partial_path(out_dir, chain)] {
+    for p in [
+        fetch_progress_path(out_dir, chain),
+        fetch_partial_path(out_dir, chain),
+    ] {
         if p.exists() {
             std::fs::remove_file(&p).ok();
         }
@@ -263,17 +266,18 @@ pub fn load_fetch_partial_events(out_dir: &Path, chain: &str) -> Result<Vec<Tran
     Ok(events)
 }
 
-pub fn append_fetch_partial_events(out_dir: &Path, chain: &str, new_rows: &[TransferEvent]) -> Result<()> {
+pub fn append_fetch_partial_events(
+    out_dir: &Path,
+    chain: &str,
+    new_rows: &[TransferEvent],
+) -> Result<()> {
     if new_rows.is_empty() {
         return Ok(());
     }
     std::fs::create_dir_all(checkpoint_root(out_dir))?;
     let path = fetch_partial_path(out_dir, chain);
     let file_exists = path.exists();
-    let mut file = OpenOptions::new()
-        .create(true)
-        .append(true)
-        .open(&path)?;
+    let mut file = OpenOptions::new().create(true).append(true).open(&path)?;
     let mut wtr = csv::WriterBuilder::new()
         .has_headers(!file_exists)
         .from_writer(&mut file);
@@ -355,8 +359,8 @@ pub fn count_chunks(from_block: u64, to_block: u64, chunk_size: u64) -> u64 {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use alloy::primitives::U256;
     use crate::decode::TransferEvent;
+    use alloy::primitives::U256;
     use std::path::PathBuf;
 
     fn tmp_out(suffix: &str) -> PathBuf {
@@ -479,7 +483,14 @@ mod tests {
                 to_block_requested: "200".into(),
             },
         ];
-        let mut manifest = CheckpointManifest::new("usdc", "run_a", "2026-01-01T00:00:00Z", 500, true, specs.clone());
+        let mut manifest = CheckpointManifest::new(
+            "usdc",
+            "run_a",
+            "2026-01-01T00:00:00Z",
+            500,
+            true,
+            specs.clone(),
+        );
         save_manifest(&out, &manifest).unwrap();
         let loaded = load_manifest(&out).unwrap().expect("manifest exists");
         validate_manifest_matches(&loaded, "USDC", "run_a", 500, true, &specs).unwrap();

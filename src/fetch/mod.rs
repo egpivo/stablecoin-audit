@@ -27,15 +27,10 @@ pub async fn fetch_transfer_logs<T: Transport + Clone>(
     params: &FetchParams,
 ) -> Result<Vec<Log>> {
     let mut all_logs: Vec<Log> = Vec::new();
-    fetch_transfer_logs_incremental(
-        provider,
-        params,
-        params.from_block,
-        |_, _, _, _, logs| {
-            all_logs.extend(logs.iter().cloned());
-            Ok(())
-        },
-    )
+    fetch_transfer_logs_incremental(provider, params, params.from_block, |_, _, _, _, logs| {
+        all_logs.extend(logs.iter().cloned());
+        Ok(())
+    })
     .await?;
     Ok(all_logs)
 }
@@ -58,13 +53,19 @@ pub async fn fetch_transfer_logs_incremental<T: Transport + Clone>(
 
     let total_chunks = count_chunks(params.from_block, params.to_block, params.chunk_size);
     let mut chunks_done = if start > params.from_block {
-        count_chunks(params.from_block, start.saturating_sub(1), params.chunk_size)
+        count_chunks(
+            params.from_block,
+            start.saturating_sub(1),
+            params.chunk_size,
+        )
     } else {
         0
     };
 
     while start <= params.to_block {
-        let end = start.saturating_add(params.chunk_size - 1).min(params.to_block);
+        let end = start
+            .saturating_add(params.chunk_size - 1)
+            .min(params.to_block);
 
         let filter = Filter::new()
             .address(params.contract_address)
@@ -160,9 +161,11 @@ mod tests {
             to_block: 10,
             chunk_size: 0,
         };
-        assert!(fetch_transfer_logs_incremental(&provider, &params, 1, |_, _, _, _, _| Ok(()))
-            .await
-            .is_err());
+        assert!(
+            fetch_transfer_logs_incremental(&provider, &params, 1, |_, _, _, _, _| Ok(()))
+                .await
+                .is_err()
+        );
     }
 
     #[tokio::test]

@@ -47,10 +47,7 @@ pub struct ControlEventRecord {
 
 // ─── Decode a single log ──────────────────────────────────────────────────
 
-pub fn decode_control_log(
-    log: &alloy::rpc::types::Log,
-    chain: &str,
-) -> ControlEventRecord {
+pub fn decode_control_log(log: &alloy::rpc::types::Log, chain: &str) -> ControlEventRecord {
     let block_number = log.block_number.unwrap_or(0);
     let tx_hash = log
         .transaction_hash
@@ -167,10 +164,7 @@ pub fn decode_control_log(
         )
     } else if topic0 == Upgraded::SIGNATURE_HASH {
         try_decode!(Upgraded, "Upgraded", |ev: Upgraded| {
-            format!(
-                "{{\"implementation\":\"{}\"}}",
-                fmt_addr(ev.implementation)
-            )
+            format!("{{\"implementation\":\"{}\"}}", fmt_addr(ev.implementation))
         })
     } else {
         ControlEventRecord {

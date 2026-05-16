@@ -18,10 +18,9 @@ pub struct TokenConfig {
 
 impl TokenConfig {
     pub fn load(path: &Path) -> Result<Self> {
-        let text = std::fs::read_to_string(path)
-            .with_context(|| format!("reading {}", path.display()))?;
-        serde_yaml::from_str(&text)
-            .with_context(|| format!("parsing {}", path.display()))
+        let text =
+            std::fs::read_to_string(path).with_context(|| format!("reading {}", path.display()))?;
+        serde_yaml::from_str(&text).with_context(|| format!("parsing {}", path.display()))
     }
 
     pub fn rpc_url(&self) -> Result<String> {

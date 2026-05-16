@@ -91,7 +91,9 @@ pub fn run(asset: &str) -> Result<()> {
             prov.data_source
         );
     }
-    if qa.asset.to_uppercase() != asset.to_uppercase() || prov.asset.to_uppercase() != asset.to_uppercase() {
+    if qa.asset.to_uppercase() != asset.to_uppercase()
+        || prov.asset.to_uppercase() != asset.to_uppercase()
+    {
         anyhow::bail!("asset mismatch between CLI and control artifacts");
     }
     validate_control_provenance_vs_qa(&qa, &prov)?;
@@ -122,7 +124,10 @@ pub fn run(asset: &str) -> Result<()> {
             signals.push(format!("minter_admin_events={}", counts.minter_admin));
         }
         if counts.upgrade_ownership > 0 {
-            signals.push(format!("upgrade_or_ownership_events={}", counts.upgrade_ownership));
+            signals.push(format!(
+                "upgrade_or_ownership_events={}",
+                counts.upgrade_ownership
+            ));
         }
 
         let benchmark_status = if signals.is_empty() { "PASS" } else { "WARN" };
@@ -147,7 +152,10 @@ pub fn run(asset: &str) -> Result<()> {
     write_benchmark_csv(&out_dir, &rows)?;
     write_benchmark_md(asset, &qa, &prov, &rows, &out_dir)?;
 
-    println!("\n=== v0.2 control-surface benchmark ({}) ===", asset.to_uppercase());
+    println!(
+        "\n=== v0.2 control-surface benchmark ({}) ===",
+        asset.to_uppercase()
+    );
     println!(
         "Wrote: {}/v0_2_control_benchmark.csv, {}/v0_2_control_benchmark.md",
         out_dir.display(),
@@ -179,7 +187,10 @@ fn addr_eq(a: &str, b: &str) -> bool {
 }
 
 /// Full bundle: same chain set in QA and provenance, matching fingerprints, no simulated rows.
-fn validate_control_provenance_vs_qa(qa: &ControlQaReport, prov: &ControlProvenanceReport) -> Result<()> {
+fn validate_control_provenance_vs_qa(
+    qa: &ControlQaReport,
+    prov: &ControlProvenanceReport,
+) -> Result<()> {
     if qa.chains.is_empty() {
         anyhow::bail!("control_qa_report.json has no chains");
     }
@@ -266,7 +277,10 @@ struct ControlCounts {
     upgrade_ownership: usize,
 }
 
-fn validate_and_count_control_events_csv(out_dir: &Path, qa_chain: &ControlQaChain) -> Result<ControlCounts> {
+fn validate_and_count_control_events_csv(
+    out_dir: &Path,
+    qa_chain: &ControlQaChain,
+) -> Result<ControlCounts> {
     let chain = qa_chain.chain.as_str();
     let path = out_dir.join(format!("control_events_{chain}.csv"));
     if !path.exists() {
@@ -283,8 +297,8 @@ fn validate_and_count_control_events_csv(out_dir: &Path, qa_chain: &ControlQaCha
         )
     })?;
 
-    let mut rdr = csv::Reader::from_path(&path)
-        .with_context(|| format!("open {}", path.display()))?;
+    let mut rdr =
+        csv::Reader::from_path(&path).with_context(|| format!("open {}", path.display()))?;
     let mut counts = ControlCounts {
         pause: 0,
         blacklist: 0,
@@ -293,7 +307,9 @@ fn validate_and_count_control_events_csv(out_dir: &Path, qa_chain: &ControlQaCha
     };
     let mut row_count: usize = 0;
     for (idx, rec) in rdr.deserialize::<ControlEventRecord>().enumerate() {
-        let row = rec.with_context(|| format!("parse row {} in {}", idx.saturating_add(1), path.display()))?;
+        let row = rec.with_context(|| {
+            format!("parse row {} in {}", idx.saturating_add(1), path.display())
+        })?;
         row_count += 1;
         if row.chain != chain {
             anyhow::bail!(
@@ -317,7 +333,9 @@ fn validate_and_count_control_events_csv(out_dir: &Path, qa_chain: &ControlQaCha
         match row.event_name.as_str() {
             "Pause" | "Unpause" => counts.pause += 1,
             "Blacklisted" | "UnBlacklisted" => counts.blacklist += 1,
-            "MinterConfigured" | "MinterRemoved" | "MasterMinterChanged" => counts.minter_admin += 1,
+            "MinterConfigured" | "MinterRemoved" | "MasterMinterChanged" => {
+                counts.minter_admin += 1
+            }
             "OwnershipTransferred" | "Upgraded" => counts.upgrade_ownership += 1,
             _ => {}
         }
@@ -353,10 +371,16 @@ fn write_benchmark_md(
 ) -> Result<()> {
     let now = Utc::now().to_rfc3339();
     let mut md = String::new();
-    md.push_str(&format!("# {} v0.2 Control-Surface Benchmark\n\n", asset.to_uppercase()));
+    md.push_str(&format!(
+        "# {} v0.2 Control-Surface Benchmark\n\n",
+        asset.to_uppercase()
+    ));
     md.push_str(&format!("Generated at: {}\n\n", now));
     md.push_str(&format!("Control QA generated_at: {}\n", qa.generated_at));
-    md.push_str(&format!("Control provenance generated_at: {}\n", prov.generated_at));
+    md.push_str(&format!(
+        "Control provenance generated_at: {}\n",
+        prov.generated_at
+    ));
     md.push_str(&format!("Data source: {}\n\n", prov.data_source));
     md.push_str("Scope: issuer-side control actions only.\n");
     md.push_str("Non-scope: wallet attribution, AML scoring, or intent inference.\n\n");

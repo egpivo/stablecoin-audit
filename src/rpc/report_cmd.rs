@@ -104,8 +104,7 @@ pub fn run(asset: &str) -> Result<()> {
             report_path.display()
         );
     }
-    let fetch_report: FetchReport =
-        serde_json::from_str(&std::fs::read_to_string(&report_path)?)?;
+    let fetch_report: FetchReport = serde_json::from_str(&std::fs::read_to_string(&report_path)?)?;
 
     let report_generated_at = Utc::now().to_rfc3339();
 
@@ -113,18 +112,17 @@ pub fn run(asset: &str) -> Result<()> {
     let mut chain_reports: Vec<ChainReport> = Vec::new();
     for result in &fetch_report.chains {
         let csv_path = out_dir.join(format!("transfers_{}.csv", result.chain));
-        let (unique_senders, unique_recipients, csv_missing) =
-            if csv_path.exists() {
-                let (s, r) = count_unique_addresses(&csv_path)?;
-                (s, r, false)
-            } else {
-                eprintln!(
-                    "[WARN] CSV not found for chain {}: {}",
-                    result.chain,
-                    csv_path.display()
-                );
-                (0, 0, true)
-            };
+        let (unique_senders, unique_recipients, csv_missing) = if csv_path.exists() {
+            let (s, r) = count_unique_addresses(&csv_path)?;
+            (s, r, false)
+        } else {
+            eprintln!(
+                "[WARN] CSV not found for chain {}: {}",
+                result.chain,
+                csv_path.display()
+            );
+            (0, 0, true)
+        };
 
         let ctrl_csv_path = out_dir.join(format!("control_events_{}.csv", result.chain));
         let (control_events, ctrl_csv_missing) = if ctrl_csv_path.exists() {
@@ -166,18 +164,8 @@ pub fn run(asset: &str) -> Result<()> {
     write_mint_burn_by_chain_csv(&out_dir, &chain_reports)?;
     write_transfer_activity_by_chain_csv(&out_dir, &chain_reports)?;
     write_qa_report_json(&out_dir, asset, &report_generated_at, &chain_reports)?;
-    write_risk_flags_md(
-        &out_dir,
-        asset,
-        &report_generated_at,
-        &chain_reports,
-    )?;
-    write_summary_md(
-        &out_dir,
-        asset,
-        &report_generated_at,
-        &chain_reports,
-    )?;
+    write_risk_flags_md(&out_dir, asset, &report_generated_at, &chain_reports)?;
+    write_summary_md(&out_dir, asset, &report_generated_at, &chain_reports)?;
 
     // 4. Print brief summary
     println!("\n=== Report for {} ===", asset.to_uppercase());
@@ -501,7 +489,8 @@ fn write_qa_report_json(
             chain: r.chain.clone(),
             gates: QaGates {
                 no_duplicate_logs: supply_invariant_gate(r.no_duplicate_logs_pass).to_string(),
-                transfer_decode_sample: supply_invariant_gate(r.transfer_decode_sample_pass).to_string(),
+                transfer_decode_sample: supply_invariant_gate(r.transfer_decode_sample_pass)
+                    .to_string(),
                 all_transfer_decode: supply_invariant_gate(r.all_transfer_decode_pass).to_string(),
                 supply_invariant: supply_invariant_gate(r.supply_invariant_pass).to_string(),
                 control_event_query: ctrl_gate.to_string(),
@@ -557,7 +546,9 @@ fn write_risk_flags_md(
         match r.transfer_decode_sample_pass {
             Some(true) => md.push_str("- [PASS] Transfer decode sample pass\n"),
             Some(false) => md.push_str("- [FAIL] Transfer decode sample failed\n"),
-            None => md.push_str("- [SKIP] Transfer decode sample: not evaluated (chain hard error)\n"),
+            None => {
+                md.push_str("- [SKIP] Transfer decode sample: not evaluated (chain hard error)\n")
+            }
         }
 
         // all_transfer_decode gate
@@ -611,7 +602,11 @@ fn write_risk_flags_md(
         }
 
         // Control events section
-        let ctrl_status = cr.result.control_event_query_status.as_deref().unwrap_or("skipped");
+        let ctrl_status = cr
+            .result
+            .control_event_query_status
+            .as_deref()
+            .unwrap_or("skipped");
         if ctrl_status.starts_with("error") {
             md.push_str(&format!(
                 "- [WARN] Control event query failed: {ctrl_status}\n"
@@ -619,12 +614,12 @@ fn write_risk_flags_md(
         } else if cr.ctrl_csv_missing && ctrl_status == "skipped" {
             md.push_str("- [INFO] Control event data not available (run fetch to collect)\n");
         } else if cr.control_events.is_empty() {
-            md.push_str(
-                "- [INFO] Control event query succeeded: no events observed in window\n",
-            );
+            md.push_str("- [INFO] Control event query succeeded: no events observed in window\n");
         } else {
             if ctrl_status == "partial" {
-                md.push_str("- [WARN] Control event query partial: one or more events failed to decode\n");
+                md.push_str(
+                    "- [WARN] Control event query partial: one or more events failed to decode\n",
+                );
             }
             for ev in &cr.control_events {
                 let level = if ev.decode_status == "decode_error" {
@@ -663,11 +658,11 @@ fn write_summary_md(
 ) -> Result<()> {
     let mut md = String::new();
 
+    md.push_str(&format!("# {} Audit Report\n\n", asset.to_uppercase()));
     md.push_str(&format!(
-        "# {} Audit Report\n\n",
-        asset.to_uppercase()
+        "**Report generated:** {}\n\n",
+        report_generated_at
     ));
-    md.push_str(&format!("**Report generated:** {}\n\n", report_generated_at));
     md.push_str(&format!(
         "**Chains audited:** {}\n\n",
         chain_reports
@@ -744,10 +739,26 @@ fn write_summary_md(
     md.push_str("|-------|------------|--------------|-------------|------------------|\n");
     for cr in chain_reports {
         let r = cr.result;
-        let dup = match r.no_duplicate_logs_pass { Some(true) => "✓", Some(false) => "✗", None => "—" };
-        let decode = match r.transfer_decode_sample_pass { Some(true) => "✓", Some(false) => "✗", None => "—" };
-        let all_dec = match r.all_transfer_decode_pass { Some(true) => "✓", Some(false) => "✗", None => "—" };
-        let inv = match r.supply_invariant_pass { Some(true) => "✓", Some(false) => "✗", None => "—" };
+        let dup = match r.no_duplicate_logs_pass {
+            Some(true) => "✓",
+            Some(false) => "✗",
+            None => "—",
+        };
+        let decode = match r.transfer_decode_sample_pass {
+            Some(true) => "✓",
+            Some(false) => "✗",
+            None => "—",
+        };
+        let all_dec = match r.all_transfer_decode_pass {
+            Some(true) => "✓",
+            Some(false) => "✗",
+            None => "—",
+        };
+        let inv = match r.supply_invariant_pass {
+            Some(true) => "✓",
+            Some(false) => "✗",
+            None => "—",
+        };
         md.push_str(&format!(
             "| {} | {} | {} | {} | {} |\n",
             r.chain, dup, decode, all_dec, inv,
@@ -765,7 +776,11 @@ fn write_summary_md(
         let status = r
             .control_event_query_status
             .as_deref()
-            .unwrap_or(if cr.ctrl_csv_missing { "skipped" } else { "pass" });
+            .unwrap_or(if cr.ctrl_csv_missing {
+                "skipped"
+            } else {
+                "pass"
+            });
         md.push_str(&format!("| {} | {} | {} |\n", r.chain, count, status));
     }
     md.push('\n');

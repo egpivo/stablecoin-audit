@@ -100,7 +100,9 @@ mod cli {
                             )
                         })?;
                         if b < from_block {
-                            anyhow::bail!("--to-block ({b}) must be >= --from-block ({from_block})");
+                            anyhow::bail!(
+                                "--to-block ({b}) must be >= --from-block ({from_block})"
+                            );
                         }
                     }
                     let chains = if chains.is_empty() {
@@ -184,7 +186,8 @@ mod cli {
                 } else {
                     chains
                 };
-                crate::rpc::fetch_logs::run(&asset, &chains, from_block, to_block, chunk_size).await?;
+                crate::rpc::fetch_logs::run(&asset, &chains, from_block, to_block, chunk_size)
+                    .await?;
             }
             #[cfg(feature = "experimental")]
             Commands::Report { asset } => {
@@ -213,7 +216,10 @@ mod cli {
                 let tb = to_block.trim();
                 if !tb.eq_ignore_ascii_case("latest") {
                     let b: u64 = tb.parse().map_err(|_| {
-                        anyhow::anyhow!("--to-block must be a block number or latest, got {:?}", to_block)
+                        anyhow::anyhow!(
+                            "--to-block must be a block number or latest, got {:?}",
+                            to_block
+                        )
                     })?;
                     if b < from_block {
                         anyhow::bail!("--to-block ({b}) must be >= --from-block ({from_block})");
@@ -430,8 +436,8 @@ mod tests {
 
     #[test]
     fn cross_chain_summary_from_benchmark_fixture() {
-        let fixture = Path::new(env!("CARGO_MANIFEST_DIR"))
-            .join("docs/benchmarks/usdc_7d_20260501_20260508");
+        let fixture =
+            Path::new(env!("CARGO_MANIFEST_DIR")).join("docs/benchmarks/usdc_7d_20260501_20260508");
         let run_id = format!("itest_{}", std::process::id());
         let out_dir = crate::ensure_run_out_dir("USDC", &run_id).unwrap();
         for name in [

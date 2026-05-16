@@ -18,8 +18,8 @@ use crate::report::{default_run_id, ensure_run_out_dir, format_token_amount, val
 use crate::rpc::transfer_checkpoint::{
     self, ChainSpecRecord, CheckpointChainBundle, CheckpointManifest, FetchChunkProgress,
 };
-use std::path::Path;
 use crate::rpc::{build_provider, HttpProvider};
+use std::path::Path;
 
 const DEFAULT_CHUNK_SIZE: u64 = 500;
 const QA_SAMPLE_SIZE: usize = 100;
@@ -144,7 +144,12 @@ pub(crate) fn compute_supply_invariant(
     let net_mint = I256::from_raw(sum_mints) - I256::from_raw(sum_burns);
     let onchain_delta = I256::from_raw(supply_end) - I256::from_raw(supply_start);
     let discrepancy = net_mint - onchain_delta;
-    (net_mint, onchain_delta, discrepancy, discrepancy == I256::ZERO)
+    (
+        net_mint,
+        onchain_delta,
+        discrepancy,
+        discrepancy == I256::ZERO,
+    )
 }
 
 /// Parse `--window chain:from:to` (inclusive end block `to`, same convention as `--to-block`).
@@ -353,7 +358,10 @@ pub(crate) fn build_run_plan(mode: RunMode<'_>) -> Result<RunPlan> {
     }
 }
 
-pub(crate) fn build_provenance_md_intro(per_chain_spans: bool, supply_rows: &[SupplyAuditRow]) -> String {
+pub(crate) fn build_provenance_md_intro(
+    per_chain_spans: bool,
+    supply_rows: &[SupplyAuditRow],
+) -> String {
     if per_chain_spans {
         let mut intro = String::from(
             "**Per-chain block spans** — each L2/L1 uses its own block height; \
@@ -362,10 +370,7 @@ numbers are not comparable across chains, but metrics use one schema.\n\n",
         for row in supply_rows {
             intro.push_str(&format!(
                 "- **{}:** blocks `{}` → `{}` (resolved end {:?})\n",
-                row.chain,
-                row.from_block,
-                row.to_block_requested,
-                row.resolved_to_block
+                row.chain, row.from_block, row.to_block_requested, row.resolved_to_block
             ));
         }
         intro.push('\n');
@@ -454,7 +459,8 @@ async fn run_inner(
 
     for task in &plan.chain_tasks {
         if completed.contains(&task.chain) {
-            let (events, bundle) = transfer_checkpoint::load_completed_chain(&out_dir, &task.chain)?;
+            let (events, bundle) =
+                transfer_checkpoint::load_completed_chain(&out_dir, &task.chain)?;
             println!(
                 "[{}] loaded from checkpoint ({} transfers)",
                 task.chain.to_uppercase(),
@@ -508,10 +514,8 @@ async fn run_inner(
         per_chain_spans: plan.per_chain_spans,
     };
 
-    let mut pairs: Vec<(SupplyAuditRow, QaChain)> = supply_rows
-        .into_iter()
-        .zip(qa_chains.into_iter())
-        .collect();
+    let mut pairs: Vec<(SupplyAuditRow, QaChain)> =
+        supply_rows.into_iter().zip(qa_chains.into_iter()).collect();
     pairs.sort_by(|a, b| a.0.chain.cmp(&b.0.chain));
     let (supply_rows, qa_chains): (Vec<_>, Vec<_>) = pairs.into_iter().unzip();
 
@@ -694,8 +698,12 @@ Block heights are chain-native and not numerically comparable across chains.\n\n
     md.push('\n');
 
     md.push_str("## QA gates\n\n");
-    md.push_str("| Chain | metadata | hist_supply | no_dup | decode | supply_inv | provenance_stamp |\n");
-    md.push_str("|-------|----------|-------------|--------|--------|------------|------------------|\n");
+    md.push_str(
+        "| Chain | metadata | hist_supply | no_dup | decode | supply_inv | provenance_stamp |\n",
+    );
+    md.push_str(
+        "|-------|----------|-------------|--------|--------|------------|------------------|\n",
+    );
     for (row, q) in rows.iter().zip(qa.iter()) {
         md.push_str(&format!(
             "| {} | {} | {} | {} | {} | {} | {} |\n",
@@ -774,19 +782,23 @@ pub(crate) fn build_supply_metrics_from_events(
         .filter(|e| e.kind == "burn")
         .fold(U256::ZERO, |acc, e| acc + e.value_u256);
 
-    let (net_mint_opt, onchain_delta_opt, discrepancy_opt, invariant_pass) =
-        if decode_errors > 0 {
-            (None, None, None, None)
-        } else {
-            match (supply_start, supply_end) {
-                (Some(start), Some(end)) => {
-                    let (net_mint, onchain_delta, discrepancy, pass) =
-                        compute_supply_invariant(sum_mints, sum_burns, start, end);
-                    (Some(net_mint), Some(onchain_delta), Some(discrepancy), Some(pass))
-                }
-                _ => (None, None, None, None),
+    let (net_mint_opt, onchain_delta_opt, discrepancy_opt, invariant_pass) = if decode_errors > 0 {
+        (None, None, None, None)
+    } else {
+        match (supply_start, supply_end) {
+            (Some(start), Some(end)) => {
+                let (net_mint, onchain_delta, discrepancy, pass) =
+                    compute_supply_invariant(sum_mints, sum_burns, start, end);
+                (
+                    Some(net_mint),
+                    Some(onchain_delta),
+                    Some(discrepancy),
+                    Some(pass),
+                )
             }
-        };
+            _ => (None, None, None, None),
+        }
+    };
 
     SupplyMetrics {
         deduped,
@@ -808,6 +820,7 @@ pub(crate) fn build_supply_metrics_from_events(
 }
 
 /// Write transfer-audit artifacts (CSV/MD/JSON) for a completed run.
+#[allow(clippy::too_many_arguments)]
 pub(crate) fn write_run_artifacts(
     out_dir: &Path,
     asset: &str,
@@ -872,6 +885,7 @@ pub(crate) fn write_run_artifacts(
     Ok(())
 }
 
+#[allow(clippy::too_many_arguments)]
 pub(crate) async fn process_chain(
     asset: &str,
     chain: &str,
@@ -1151,15 +1165,12 @@ pub(crate) async fn process_chain(
         }
     };
 
-    if fetch_progress.is_none()
-        && transfer_checkpoint::fetch_partial_path(out_dir, chain).exists()
+    if fetch_progress.is_none() && transfer_checkpoint::fetch_partial_path(out_dir, chain).exists()
     {
         transfer_checkpoint::clear_chain_fetch_progress(out_dir, chain).ok();
     }
 
-    let fetch_already_done = fetch_progress
-        .as_ref()
-        .is_some_and(|p| p.is_complete());
+    let fetch_already_done = fetch_progress.as_ref().is_some_and(|p| p.is_complete());
 
     let mut events = if fetch_already_done {
         match transfer_checkpoint::load_fetch_partial_events(out_dir, chain) {
@@ -1227,10 +1238,7 @@ pub(crate) async fn process_chain(
         .map(|p| p.resume_from_block())
         .unwrap_or(from_block);
 
-    let mut logs_fetched: usize = fetch_progress
-        .as_ref()
-        .map(|p| p.logs_fetched)
-        .unwrap_or(0);
+    let mut logs_fetched: usize = fetch_progress.as_ref().map(|p| p.logs_fetched).unwrap_or(0);
     let mut decode_errors = 0usize;
     let mut qa_sample_done = fetch_already_done || fetch_progress.is_some();
 
@@ -1270,12 +1278,8 @@ pub(crate) async fn process_chain(
 
                 let mut chunk_events = Vec::with_capacity(logs.len());
                 for log in logs {
-                    match decode_transfer_log(
-                        log,
-                        &chain_owned,
-                        &contract_str,
-                        decimals_for_decode,
-                    ) {
+                    match decode_transfer_log(log, &chain_owned, &contract_str, decimals_for_decode)
+                    {
                         Ok(ev) => chunk_events.push(ev),
                         Err(e) => {
                             decode_errors += 1;
@@ -1346,18 +1350,10 @@ pub(crate) async fn process_chain(
     );
 
     if decode_errors > 5 {
-        errors.push(format!(
-            "... and {} more decode errors",
-            decode_errors - 5
-        ));
+        errors.push(format!("... and {} more decode errors", decode_errors - 5));
     }
 
-    let metrics = build_supply_metrics_from_events(
-        events,
-        decode_errors,
-        supply_start,
-        supply_end,
-    );
+    let metrics = build_supply_metrics_from_events(events, decode_errors, supply_start, supply_end);
     let deduped = metrics.deduped;
     let dup_count = metrics.duplicate_count;
     let mint_count = metrics.mint_count;
@@ -1443,6 +1439,7 @@ pub(crate) async fn process_chain(
     (deduped, supply, qa, hard_error)
 }
 
+#[allow(clippy::too_many_arguments)]
 pub(crate) fn partial_supply_after_fetch_fail(
     chain: &str,
     config: &TokenConfig,
@@ -1534,8 +1531,13 @@ pub(crate) fn failed_supply_row(
     }
 }
 
-pub(crate) fn build_qa_chain(supply: &SupplyAuditRow, generated_at: &str, errors: &[String]) -> QaChain {
-    let prov = !supply.to_block_requested.is_empty() && supply.from_block > 0 && !generated_at.is_empty();
+pub(crate) fn build_qa_chain(
+    supply: &SupplyAuditRow,
+    generated_at: &str,
+    errors: &[String],
+) -> QaChain {
+    let prov =
+        !supply.to_block_requested.is_empty() && supply.from_block > 0 && !generated_at.is_empty();
     QaChain {
         chain: supply.chain.clone(),
         chain_id: supply.chain_id,
@@ -1609,10 +1611,7 @@ They are **not** estimates of total token holders or a full holder reconstructio
                 .map(|b| b.to_string())
                 .unwrap_or_else(|| "—".into())
         ));
-        md.push_str(&format!(
-            "- **Contract:** `{}`\n",
-            row.contract_address
-        ));
+        md.push_str(&format!("- **Contract:** `{}`\n", row.contract_address));
         md.push_str(&format!(
             "- **Transfer events (deduped):** {}\n",
             row.transfer_event_count
@@ -1680,10 +1679,7 @@ mod tests {
     use std::path::PathBuf;
 
     fn tmp_out(label: &str) -> PathBuf {
-        let p = std::env::temp_dir().join(format!(
-            "ta_test_{}_{label}",
-            std::process::id()
-        ));
+        let p = std::env::temp_dir().join(format!("ta_test_{}_{label}", std::process::id()));
         let _ = std::fs::remove_dir_all(&p);
         std::fs::create_dir_all(&p).unwrap();
         p
@@ -1756,8 +1752,12 @@ mod tests {
 
     #[test]
     fn supply_invariant_fails_on_discrepancy() {
-        let (_, _, disc, pass) =
-            compute_supply_invariant(U256::from(100u64), U256::ZERO, U256::ZERO, U256::from(50u64));
+        let (_, _, disc, pass) = compute_supply_invariant(
+            U256::from(100u64),
+            U256::ZERO,
+            U256::ZERO,
+            U256::from(50u64),
+        );
         assert!(!pass);
         assert_ne!(disc, I256::ZERO);
     }
@@ -1912,11 +1912,13 @@ mod tests {
 
     #[tokio::test]
     async fn process_chain_missing_rpc_env() {
-        let _lock = crate::rpc::RPC_ENV_LOCK.lock().unwrap();
         let out = tmp_out("prpc");
         let key = "ALCHEMY_ETHEREUM_URL";
         let saved = std::env::var(key).ok();
-        std::env::set_var(key, "");
+        {
+            let _lock = crate::rpc::RPC_ENV_LOCK.lock().unwrap();
+            std::env::set_var(key, "");
+        }
         let (_, supply, qa, hard) = process_chain(
             "USDC",
             "ethereum",
@@ -1931,21 +1933,26 @@ mod tests {
         assert!(hard);
         assert_eq!(supply.chain, "ethereum");
         assert!(!qa.errors.is_empty());
-        if let Some(v) = saved {
-            std::env::set_var(key, v);
-        } else {
-            std::env::remove_var(key);
+        {
+            let _lock = crate::rpc::RPC_ENV_LOCK.lock().unwrap();
+            if let Some(v) = saved {
+                std::env::set_var(key, v);
+            } else {
+                std::env::remove_var(key);
+            }
         }
         let _ = std::fs::remove_dir_all(&out);
     }
 
     #[tokio::test]
     async fn process_chain_unreachable_rpc_exercises_metadata_and_fetch_paths() {
-        let _lock = crate::rpc::RPC_ENV_LOCK.lock().unwrap();
         let out = tmp_out("prpcfail");
         let key = "ALCHEMY_ETHEREUM_URL";
         let saved = std::env::var(key).ok();
-        std::env::set_var(key, "http://127.0.0.1:1");
+        {
+            let _lock = crate::rpc::RPC_ENV_LOCK.lock().unwrap();
+            std::env::set_var(key, "http://127.0.0.1:1");
+        }
         let (events, supply, qa, hard) = process_chain(
             "USDC",
             "ethereum",
@@ -1961,10 +1968,13 @@ mod tests {
         assert_eq!(supply.chain, "ethereum");
         assert!(!qa.errors.is_empty() || !supply.metadata_call_pass);
         let _ = events;
-        if let Some(v) = saved {
-            std::env::set_var(key, v);
-        } else {
-            std::env::remove_var(key);
+        {
+            let _lock = crate::rpc::RPC_ENV_LOCK.lock().unwrap();
+            if let Some(v) = saved {
+                std::env::set_var(key, v);
+            } else {
+                std::env::remove_var(key);
+            }
         }
         let _ = std::fs::remove_dir_all(&out);
     }
@@ -2015,14 +2025,8 @@ mod tests {
                 to_block_requested: "400".into(),
             },
         ];
-        let mut manifest = CheckpointManifest::new(
-            "USDC",
-            &run_id,
-            "2026-01-01T00:00:00Z",
-            500,
-            true,
-            specs,
-        );
+        let mut manifest =
+            CheckpointManifest::new("USDC", &run_id, "2026-01-01T00:00:00Z", 500, true, specs);
         for (chain, from, to) in [("ethereum", 100u64, 200u64), ("base", 300, 400)] {
             let supply = SupplyAuditRow {
                 chain: chain.into(),
@@ -2058,14 +2062,8 @@ mod tests {
             };
             let qa = build_qa_chain(&supply, "2026-01-01T00:00:00Z", &[]);
             let bundle = CheckpointChainBundle { supply, qa };
-            transfer_checkpoint::save_completed_chain(
-                &out,
-                &mut manifest,
-                chain,
-                &[],
-                &bundle,
-            )
-            .unwrap();
+            transfer_checkpoint::save_completed_chain(&out, &mut manifest, chain, &[], &bundle)
+                .unwrap();
         }
 
         run_per_chain_windows(
@@ -2086,12 +2084,15 @@ mod tests {
 
     #[tokio::test]
     async fn process_chain_mock_rpc_completes_with_empty_logs() {
-        let _lock = crate::rpc::RPC_ENV_LOCK.lock().unwrap();
         let server = crate::rpc::mock_rpc::tests::spawn_usdc_rpc().await;
         let out = tmp_out("mockrpc");
         let key = "ALCHEMY_ETHEREUM_URL";
         let saved = std::env::var(key).ok();
-        std::env::set_var(key, server.uri());
+        let uri = server.uri();
+        {
+            let _lock = crate::rpc::RPC_ENV_LOCK.lock().unwrap();
+            std::env::set_var(key, uri);
+        }
         let (events, supply, qa, hard) = process_chain(
             "USDC",
             "ethereum",
@@ -2109,10 +2110,13 @@ mod tests {
         assert_eq!(supply.transfer_event_count, 0);
         assert_eq!(supply.supply_invariant_pass, Some(true));
         let _ = qa;
-        if let Some(v) = saved {
-            std::env::set_var(key, v);
-        } else {
-            std::env::remove_var(key);
+        {
+            let _lock = crate::rpc::RPC_ENV_LOCK.lock().unwrap();
+            if let Some(v) = saved {
+                std::env::set_var(key, v);
+            } else {
+                std::env::remove_var(key);
+            }
         }
         let _ = std::fs::remove_dir_all(&out);
     }

@@ -85,7 +85,13 @@ pub async fn run(
             Ok(c) => c,
             Err(e) => {
                 eprintln!("[{}] config load failed: {e:#}", chain.to_uppercase());
-                chain_results.push(failed_chain_result(chain, from_block, to_block, chunk_size, vec![format!("config: {e:#}")]));
+                chain_results.push(failed_chain_result(
+                    chain,
+                    from_block,
+                    to_block,
+                    chunk_size,
+                    vec![format!("config: {e:#}")],
+                ));
                 any_hard_error = true;
                 continue;
             }
@@ -95,7 +101,13 @@ pub async fn run(
             Ok(u) => u,
             Err(e) => {
                 eprintln!("[{}] env var missing: {e:#}", chain.to_uppercase());
-                chain_results.push(failed_chain_result(chain, from_block, to_block, chunk_size, vec![format!("{e:#}")]));
+                chain_results.push(failed_chain_result(
+                    chain,
+                    from_block,
+                    to_block,
+                    chunk_size,
+                    vec![format!("{e:#}")],
+                ));
                 any_hard_error = true;
                 continue;
             }
@@ -105,7 +117,13 @@ pub async fn run(
             Ok(p) => p,
             Err(e) => {
                 eprintln!("[{}] provider init failed: {e:#}", chain.to_uppercase());
-                chain_results.push(failed_chain_result(chain, from_block, to_block, chunk_size, vec![format!("{e:#}")]));
+                chain_results.push(failed_chain_result(
+                    chain,
+                    from_block,
+                    to_block,
+                    chunk_size,
+                    vec![format!("{e:#}")],
+                ));
                 any_hard_error = true;
                 continue;
             }
@@ -115,7 +133,13 @@ pub async fn run(
             Ok(a) => a,
             Err(e) => {
                 eprintln!("[{}] bad contract address: {e:#}", chain.to_uppercase());
-                chain_results.push(failed_chain_result(chain, from_block, to_block, chunk_size, vec![format!("contract_address: {e:#}")]));
+                chain_results.push(failed_chain_result(
+                    chain,
+                    from_block,
+                    to_block,
+                    chunk_size,
+                    vec![format!("contract_address: {e:#}")],
+                ));
                 any_hard_error = true;
                 continue;
             }
@@ -130,14 +154,26 @@ pub async fn run(
                     config.chain_id, config.rpc_url_env
                 );
                 eprintln!("[{}] {msg}", chain.to_uppercase());
-                chain_results.push(failed_chain_result(chain, from_block, to_block, chunk_size, vec![msg]));
+                chain_results.push(failed_chain_result(
+                    chain,
+                    from_block,
+                    to_block,
+                    chunk_size,
+                    vec![msg],
+                ));
                 any_hard_error = true;
                 continue;
             }
             Err(e) => {
                 let msg = format!("eth_chainId failed: {e:#}");
                 eprintln!("[{}] {msg}", chain.to_uppercase());
-                chain_results.push(failed_chain_result(chain, from_block, to_block, chunk_size, vec![msg]));
+                chain_results.push(failed_chain_result(
+                    chain,
+                    from_block,
+                    to_block,
+                    chunk_size,
+                    vec![msg],
+                ));
                 any_hard_error = true;
                 continue;
             }
@@ -146,16 +182,30 @@ pub async fn run(
 
         println!(
             "[{}] fetching Transfer logs block {} → {} (chunk {})",
-            chain.to_uppercase(), from_block, to_block, chunk_size
+            chain.to_uppercase(),
+            from_block,
+            to_block,
+            chunk_size
         );
 
-        let params = FetchParams { contract_address: addr, from_block, to_block, chunk_size };
+        let params = FetchParams {
+            contract_address: addr,
+            from_block,
+            to_block,
+            chunk_size,
+        };
         let raw_logs = match fetch_transfer_logs(&provider, &params).await {
             Ok(logs) => logs,
             Err(e) => {
                 let msg = format!("eth_getLogs failed: {e:#}");
                 eprintln!("[{}] {msg}", chain.to_uppercase());
-                chain_results.push(failed_chain_result(chain, from_block, to_block, chunk_size, vec![msg]));
+                chain_results.push(failed_chain_result(
+                    chain,
+                    from_block,
+                    to_block,
+                    chunk_size,
+                    vec![msg],
+                ));
                 any_hard_error = true;
                 continue;
             }
@@ -216,31 +266,42 @@ pub async fn run(
         let contract = IERC20Supply::new(addr, &provider);
         let start_minus_1 = from_block.saturating_sub(1);
 
-        let (supply_start, supply_start_provenance): (Option<U256>, String) =
-            if config.deployment_block.is_some_and(|d| start_minus_1 < d) {
-                let deploy = config.deployment_block.unwrap();
-                (
-                    Some(U256::ZERO),
-                    format!("pre-deployment zero: block {start_minus_1} < deployment_block {deploy}"),
-                )
-            } else {
-                match contract.totalSupply().block(BlockId::number(start_minus_1)).call().await {
-                    Ok(r) => (Some(r._0), "on-chain".into()),
-                    Err(e) => {
-                        errors.push(format!("totalSupply() at block {start_minus_1}: {e:#}"));
-                        (None, "rpc-error".into())
-                    }
-                }
-            };
-
-        let supply_end: Option<U256> =
-            match contract.totalSupply().block(BlockId::number(to_block)).call().await {
-                Ok(r) => Some(r._0),
+        let (supply_start, supply_start_provenance): (Option<U256>, String) = if config
+            .deployment_block
+            .is_some_and(|d| start_minus_1 < d)
+        {
+            let deploy = config.deployment_block.unwrap();
+            (
+                Some(U256::ZERO),
+                format!("pre-deployment zero: block {start_minus_1} < deployment_block {deploy}"),
+            )
+        } else {
+            match contract
+                .totalSupply()
+                .block(BlockId::number(start_minus_1))
+                .call()
+                .await
+            {
+                Ok(r) => (Some(r._0), "on-chain".into()),
                 Err(e) => {
-                    errors.push(format!("totalSupply() at block {to_block}: {e:#}"));
-                    None
+                    errors.push(format!("totalSupply() at block {start_minus_1}: {e:#}"));
+                    (None, "rpc-error".into())
                 }
-            };
+            }
+        };
+
+        let supply_end: Option<U256> = match contract
+            .totalSupply()
+            .block(BlockId::number(to_block))
+            .call()
+            .await
+        {
+            Ok(r) => Some(r._0),
+            Err(e) => {
+                errors.push(format!("totalSupply() at block {to_block}: {e:#}"));
+                None
+            }
+        };
 
         // Compute invariant using I256 to handle negative deltas (net burning > minting).
         // All realistic stablecoin supply values are well below I256::MAX so from_raw is safe.
@@ -256,7 +317,12 @@ pub async fn run(
                         let onchain_delta = I256::from_raw(end) - I256::from_raw(start);
                         let discrepancy = net_mint - onchain_delta;
                         let pass = discrepancy == I256::ZERO;
-                        (Some(net_mint), Some(onchain_delta), Some(discrepancy), Some(pass))
+                        (
+                            Some(net_mint),
+                            Some(onchain_delta),
+                            Some(discrepancy),
+                            Some(pass),
+                        )
                     }
                     _ => (None, None, None, None),
                 }
@@ -272,8 +338,10 @@ pub async fn run(
         write_transfers_csv(&csv_path, &deduped)?;
 
         // Fetch control events
-        let (ctrl_events, ctrl_status) =
-            crate::control_events::fetch_control_events(&provider, addr, from_block, to_block, chain).await;
+        let (ctrl_events, ctrl_status) = crate::control_events::fetch_control_events(
+            &provider, addr, from_block, to_block, chain,
+        )
+        .await;
         let ctrl_count = ctrl_events.len();
         println!(
             "[{}] control events: {} (status: {})",
@@ -292,20 +360,37 @@ pub async fn run(
         };
         println!(
             "[{}] {} logs → {} unique (dup: {}) | mint: {} burn: {} transfer: {}",
-            chain.to_uppercase(), raw_count, deduped.len(), dup_count,
-            mint_count, burn_count, transfer_count,
+            chain.to_uppercase(),
+            raw_count,
+            deduped.len(),
+            dup_count,
+            mint_count,
+            burn_count,
+            transfer_count,
         );
         println!(
             "[{}] no_dup: {}  decode_qa: {}  all_decode: {}  supply_invariant: {}",
-            chain.to_uppercase(), gate(no_dup_pass), gate(decode_sample_pass), gate(all_decode_pass), inv_label,
+            chain.to_uppercase(),
+            gate(no_dup_pass),
+            gate(decode_sample_pass),
+            gate(all_decode_pass),
+            inv_label,
         );
-        if let (Some(nm), Some(od), Some(disc)) = (net_mint_opt, onchain_delta_opt, discrepancy_opt) {
+        if let (Some(nm), Some(od), Some(disc)) = (net_mint_opt, onchain_delta_opt, discrepancy_opt)
+        {
             println!(
                 "[{}]   net_mint={} onchain_delta={} discrepancy={}",
-                chain.to_uppercase(), nm, od, disc,
+                chain.to_uppercase(),
+                nm,
+                od,
+                disc,
             );
         }
-        println!("[{}] transfers written to {}", chain.to_uppercase(), csv_path.display());
+        println!(
+            "[{}] transfers written to {}",
+            chain.to_uppercase(),
+            csv_path.display()
+        );
 
         // fmt_u256 is used only for decimal-scaled supply boundary fields.
         // _raw fields store exact integer strings (no decimal scaling).

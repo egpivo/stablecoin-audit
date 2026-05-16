@@ -1,7 +1,7 @@
 # UTC-aligned 7-day benchmark — USDC (2026-05-01 → 2026-05-08)
 
-**Run id:** `usdc_7d_20260501_20260508`  
-**Asset:** native USDC on Ethereum, Base, and Arbitrum  
+**Run id:** `usdc_7d_20260501_20260508`
+**Asset:** native USDC on Ethereum, Base, and Arbitrum
 **Wall-clock interval:** `2026-05-01T00:00:00Z` through `2026-05-08T00:00:00Z` (per-chain block heights differ; resolved via `resolve-window`)
 
 This directory holds the **checked-in summary artifacts** for one completed v0.1 run. The run validates that the audit pipeline can ingest real chain data, stamp provenance, and evaluate the supply invariant gate on three deployments under one schema. It is **not** a reserve attestation, liquidity study, or market conclusion.
@@ -85,11 +85,11 @@ A PASS means mint/burn aggregates match the change in `totalSupply` at the pinne
 
 This run is **not**:
 
-- a **reserve audit** or attestation of off-chain backing  
-- a **liquidity** or market-depth analysis  
-- a **purchasing-power** or FX / peg study  
-- a **holder census** or wallet-identification exercise  
-- a **payment-volume** or economic-activity estimate  
+- a **reserve audit** or attestation of off-chain backing
+- a **liquidity** or market-depth analysis
+- a **purchasing-power** or FX / peg study
+- a **holder census** or wallet-identification exercise
+- a **payment-volume** or economic-activity estimate
 - a **cross-chain circulating-supply** proof (summing `totalSupply` across deployments double-counts bridged inventory)
 
 For interpretation rules, see the root [README.md](../../../README.md) (*Conservative interpretation*).
@@ -98,8 +98,8 @@ For interpretation rules, see the root [README.md](../../../README.md) (*Conserv
 
 To reproduce the full run directory including `decoded_transfers.csv`:
 
-1. Configure RPC URLs (see token YAML and `.env`; `.env` is gitignored).  
-2. Run the three commands in [Commands used](#commands-used).  
+1. Configure RPC URLs (see token YAML and `.env`; `.env` is gitignored).
+2. Run the three commands in [Commands used](#commands-used).
 3. Expect long RPC time on Arbitrum/Base log volume; use checkpoint resume (same `--run-id`, no `--fresh`) if interrupted.
 
 No need to re-run for repository readers who only need the published tables in this folder.

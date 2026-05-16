@@ -9,14 +9,14 @@ mod mock_rpc;
 #[cfg(test)]
 pub(crate) static RPC_ENV_LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
 #[cfg(feature = "experimental")]
-pub mod fetch_logs;
-#[cfg(feature = "experimental")]
-pub mod report_cmd;
-pub mod cross_chain_summary;
-#[cfg(feature = "experimental")]
 pub mod control_audit;
 #[cfg(feature = "experimental")]
 pub mod control_report_cmd;
+pub mod cross_chain_summary;
+#[cfg(feature = "experimental")]
+pub mod fetch_logs;
+#[cfg(feature = "experimental")]
+pub mod report_cmd;
 
 use alloy::providers::{ProviderBuilder, RootProvider};
 use alloy::transports::http::{Client, Http};

@@ -129,7 +129,10 @@ mod tests {
     fn format_pretty_thousands_with_symbol() {
         // 1_234_567.000000 USDC
         let raw = U256::from(1_234_567_000_000u64);
-        assert_eq!(format_token_amount_pretty(raw, 6, "USDC"), "1,234,567.000000 USDC");
+        assert_eq!(
+            format_token_amount_pretty(raw, 6, "USDC"),
+            "1,234,567.000000 USDC"
+        );
     }
 
     #[test]

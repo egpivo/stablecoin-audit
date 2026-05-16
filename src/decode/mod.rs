@@ -18,11 +18,11 @@ pub struct TransferEvent {
     pub log_index: u64,
     pub from: String,
     pub to: String,
-    pub value_raw: String,        // U256 as decimal string
-    pub value_decimal: String,    // formatted with decimals
-    pub kind: String,             // "mint", "burn", "transfer"
+    pub value_raw: String,     // U256 as decimal string
+    pub value_decimal: String, // formatted with decimals
+    pub kind: String,          // "mint", "burn", "transfer"
     #[serde(skip)]
-    pub value_u256: U256,         // raw value for arithmetic; not written to CSV
+    pub value_u256: U256, // raw value for arithmetic; not written to CSV
 }
 
 pub fn decode_transfer_log(
@@ -195,7 +195,11 @@ mod tests {
 
     #[test]
     fn dedup_removes_exact_duplicate() {
-        let events = vec![make_event("0xaa", 0), make_event("0xaa", 0), make_event("0xbb", 1)];
+        let events = vec![
+            make_event("0xaa", 0),
+            make_event("0xaa", 0),
+            make_event("0xbb", 1),
+        ];
         let (deduped, dups) = dedup_transfer_events(events);
         assert_eq!(deduped.len(), 2);
         assert_eq!(dups, 1);
@@ -218,7 +222,7 @@ mod tests {
 
     #[test]
     fn decode_mint_burn_and_transfer_kinds() {
-        use alloy::primitives::{Address, B256, LogData};
+        use alloy::primitives::{Address, LogData, B256};
         use alloy::rpc::types::Log;
         use alloy::sol_types::SolEvent;
 
@@ -229,7 +233,11 @@ mod tests {
         let sender = Address::repeat_byte(0x22);
 
         let make_log = |from: Address, to: Address| -> Log {
-            let ev = Transfer { from, to, value: U256::from(1_000_000u64) };
+            let ev = Transfer {
+                from,
+                to,
+                value: U256::from(1_000_000u64),
+            };
             let encoded = ev.encode_log_data();
             Log {
                 inner: alloy::primitives::Log {
@@ -243,14 +251,32 @@ mod tests {
             }
         };
 
-        let mint = decode_transfer_log(&make_log(Address::ZERO, recipient), "ethereum", &format!("{contract:#x}"), 6).unwrap();
+        let mint = decode_transfer_log(
+            &make_log(Address::ZERO, recipient),
+            "ethereum",
+            &format!("{contract:#x}"),
+            6,
+        )
+        .unwrap();
         assert_eq!(mint.kind, "mint");
         assert_eq!(mint.value_decimal, "1.000000");
 
-        let burn = decode_transfer_log(&make_log(sender, Address::ZERO), "ethereum", &format!("{contract:#x}"), 6).unwrap();
+        let burn = decode_transfer_log(
+            &make_log(sender, Address::ZERO),
+            "ethereum",
+            &format!("{contract:#x}"),
+            6,
+        )
+        .unwrap();
         assert_eq!(burn.kind, "burn");
 
-        let xfer = decode_transfer_log(&make_log(sender, recipient), "ethereum", &format!("{contract:#x}"), 6).unwrap();
+        let xfer = decode_transfer_log(
+            &make_log(sender, recipient),
+            "ethereum",
+            &format!("{contract:#x}"),
+            6,
+        )
+        .unwrap();
         assert_eq!(xfer.kind, "transfer");
         assert_eq!(xfer.block_number, 42);
     }

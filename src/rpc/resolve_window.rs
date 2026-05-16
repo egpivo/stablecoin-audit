@@ -132,7 +132,9 @@ pub async fn run(asset: &str, chains: &[String], from_s: &str, to_s: &str) -> Re
     for chain in chains {
         let config = load_single_token_config(asset, chain)
             .with_context(|| format!("load config for chain {chain:?}"))?;
-        let rpc_url = config.rpc_url().with_context(|| format!("RPC env for {chain}"))?;
+        let rpc_url = config
+            .rpc_url()
+            .with_context(|| format!("RPC env for {chain}"))?;
         let provider = build_provider(&rpc_url)?;
 
         let latest = provider
@@ -166,7 +168,11 @@ pub async fn run(asset: &str, chains: &[String], from_s: &str, to_s: &str) -> Re
     for (chain, sb, eb, tst, tet) in &rows {
         println!(
             "# {:10} blocks {} → {}  (header times {} → {})",
-            chain, sb, eb, fmt_ts(*tst), fmt_ts(*tet),
+            chain,
+            sb,
+            eb,
+            fmt_ts(*tst),
+            fmt_ts(*tet),
         );
     }
     println!();
@@ -208,17 +214,23 @@ mod tests {
     #[test]
     fn fmt_ts_emits_utc_rfc3339() {
         let d = parse_rfc3339_utc("2026-05-01T00:00:00Z").unwrap();
-        assert_eq!(fmt_ts(d.timestamp() as u64), d.to_rfc3339_opts(chrono::SecondsFormat::Secs, true));
+        assert_eq!(
+            fmt_ts(d.timestamp() as u64),
+            d.to_rfc3339_opts(chrono::SecondsFormat::Secs, true)
+        );
     }
 
     #[test]
     fn validate_window_bounds_ok() {
-        let (a, b) = super::validate_window_bounds("2026-05-01T00:00:00Z", "2026-05-08T00:00:00Z").unwrap();
+        let (a, b) =
+            super::validate_window_bounds("2026-05-01T00:00:00Z", "2026-05-08T00:00:00Z").unwrap();
         assert!(b > a);
     }
 
     #[test]
     fn validate_window_rejects_inverted() {
-        assert!(super::validate_window_bounds("2026-05-08T00:00:00Z", "2026-05-01T00:00:00Z").is_err());
+        assert!(
+            super::validate_window_bounds("2026-05-08T00:00:00Z", "2026-05-01T00:00:00Z").is_err()
+        );
     }
 }

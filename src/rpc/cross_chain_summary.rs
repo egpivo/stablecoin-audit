@@ -52,7 +52,7 @@ struct QaChainFile {
 
 #[allow(dead_code)]
 #[derive(Debug, Deserialize)]
-struct SupplyAuditRow {
+pub(crate) struct SupplyAuditRow {
     chain: String,
     chain_id: u64,
     contract_address: String,
@@ -84,7 +84,7 @@ struct SupplyAuditRow {
 }
 
 #[derive(Serialize)]
-struct CrossChainSummary {
+pub(crate) struct CrossChainSummary {
     schema_version: u32,
     asset: String,
     /// `transfer-audit` run directory name under `out/<asset>/runs/`.
@@ -133,7 +133,10 @@ fn addr_eq(a: &str, b: &str) -> bool {
 }
 
 /// `qa_report.json` top-level provenance must align with `supply_audit.csv` unless `per_chain_spans` is set.
-fn validate_provenance_window(qa: &QaReportFile, supply: &HashMap<String, SupplyAuditRow>) -> Result<()> {
+fn validate_provenance_window(
+    qa: &QaReportFile,
+    supply: &HashMap<String, SupplyAuditRow>,
+) -> Result<()> {
     if qa.provenance.per_chain_spans {
         return Ok(());
     }
@@ -151,11 +154,9 @@ fn validate_provenance_window(qa: &QaReportFile, supply: &HashMap<String, Supply
         }
     }
 
-    let prov_to = qa
-        .provenance
-        .to_block_requested
-        .as_deref()
-        .ok_or_else(|| anyhow::anyhow!("qa_report.json provenance.to_block_requested is missing"))?;
+    let prov_to = qa.provenance.to_block_requested.as_deref().ok_or_else(|| {
+        anyhow::anyhow!("qa_report.json provenance.to_block_requested is missing")
+    })?;
 
     let mut supply_reqs: HashSet<String> = HashSet::new();
     for s in supply.values() {
@@ -329,13 +330,13 @@ block numbers and window lengths are not assumed equal across chains. The signed
             let v: I256 = raw.parse().with_context(|| {
                 format!("parse onchain_delta as I256 for chain {chain}: {raw:?}")
             })?;
-            sum_delta = match sum_delta {
-                Some(acc) => Some(
-                    acc.checked_add(v)
-                        .ok_or_else(|| anyhow::anyhow!("integer overflow summing onchain deltas"))?,
-                ),
-                None => None,
-            };
+            sum_delta =
+                match sum_delta {
+                    Some(acc) => Some(acc.checked_add(v).ok_or_else(|| {
+                        anyhow::anyhow!("integer overflow summing onchain deltas")
+                    })?),
+                    None => None,
+                };
         } else {
             sum_delta = None;
         }
@@ -421,9 +422,7 @@ See each row for `from_block` → resolved end; heights are not comparable acros
             r.active_recipients,
             r.mint_count,
             r.burn_count,
-            r.total_supply_at_end_decimal
-                .as_deref()
-                .unwrap_or("—"),
+            r.total_supply_at_end_decimal.as_deref().unwrap_or("—"),
             r.onchain_delta_raw.as_deref().unwrap_or("—"),
             r.gates.metadata_call_pass,
             r.gates.historical_supply_pass,
@@ -615,7 +614,10 @@ mod tests {
             ],
         };
         let mut supply = HashMap::new();
-        supply.insert("ethereum".into(), sample_supply_row("ethereum", 100, 200, "1000"));
+        supply.insert(
+            "ethereum".into(),
+            sample_supply_row("ethereum", 100, 200, "1000"),
+        );
         supply.insert("base".into(), sample_supply_row("base", 100, 200, "-500"));
 
         let (_, sum, warnings) = validate_and_build("usdc", "run1", &qa, &supply).unwrap();
@@ -669,7 +671,10 @@ mod tests {
             ],
         };
         let mut supply = HashMap::new();
-        supply.insert("ethereum".into(), sample_supply_row("ethereum", 99, 200, "0"));
+        supply.insert(
+            "ethereum".into(),
+            sample_supply_row("ethereum", 99, 200, "0"),
+        );
         supply.insert("base".into(), sample_supply_row("base", 100, 200, "0"));
         assert!(validate_provenance_window(&qa, &supply).is_err());
     }
@@ -692,7 +697,10 @@ mod tests {
             ],
         };
         let mut supply = HashMap::new();
-        supply.insert("ethereum".into(), sample_supply_row("ethereum", 10, 20, "1"));
+        supply.insert(
+            "ethereum".into(),
+            sample_supply_row("ethereum", 10, 20, "1"),
+        );
         supply.insert("base".into(), sample_supply_row("base", 30, 40, "2"));
         validate_provenance_window(&qa, &supply).unwrap();
     }

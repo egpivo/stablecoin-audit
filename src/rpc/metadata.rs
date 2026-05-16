@@ -22,7 +22,7 @@ sol! {
 }
 
 #[derive(Serialize)]
-struct ChainMetadata {
+pub(crate) struct ChainMetadata {
     chain: String,
     chain_id: u64,
     contract_address: String,
@@ -138,7 +138,15 @@ pub async fn run(
             Err(e) => {
                 let errors = vec![format!("config: {e}")];
                 let cm = build_config_failed_chain(chain, from_block, to_block, errors);
-                print_chain_summary(&cm, None, None, None, 0, &None, "skipped: config load failed");
+                print_chain_summary(
+                    &cm,
+                    None,
+                    None,
+                    None,
+                    0,
+                    &None,
+                    "skipped: config load failed",
+                );
                 chain_results.push(cm);
                 any_hard_error = true;
                 continue;
@@ -150,8 +158,22 @@ pub async fn run(
             Ok(u) => u,
             Err(e) => {
                 let errors = vec![format!("env {}: {e}", config.rpc_url_env)];
-                let cm = build_failed_chain(&config, from_block, to_block, errors, "env var not set or invalid");
-                print_chain_summary(&cm, None, None, None, cm.decimals.unwrap_or(0), &None, &cm.total_supply_at_start_minus_1_provenance.clone());
+                let cm = build_failed_chain(
+                    &config,
+                    from_block,
+                    to_block,
+                    errors,
+                    "env var not set or invalid",
+                );
+                print_chain_summary(
+                    &cm,
+                    None,
+                    None,
+                    None,
+                    cm.decimals.unwrap_or(0),
+                    &None,
+                    &cm.total_supply_at_start_minus_1_provenance.clone(),
+                );
                 chain_results.push(cm);
                 any_hard_error = true;
                 continue;
@@ -162,8 +184,22 @@ pub async fn run(
             Ok(p) => p,
             Err(e) => {
                 let errors = vec![format!("build_provider: {e}")];
-                let cm = build_failed_chain(&config, from_block, to_block, errors, "provider initialization failed");
-                print_chain_summary(&cm, None, None, None, cm.decimals.unwrap_or(0), &None, &cm.total_supply_at_start_minus_1_provenance.clone());
+                let cm = build_failed_chain(
+                    &config,
+                    from_block,
+                    to_block,
+                    errors,
+                    "provider initialization failed",
+                );
+                print_chain_summary(
+                    &cm,
+                    None,
+                    None,
+                    None,
+                    cm.decimals.unwrap_or(0),
+                    &None,
+                    &cm.total_supply_at_start_minus_1_provenance.clone(),
+                );
                 chain_results.push(cm);
                 any_hard_error = true;
                 continue;
@@ -173,9 +209,26 @@ pub async fn run(
         let addr = match Address::from_str(&config.contract_address) {
             Ok(a) => a,
             Err(e) => {
-                let errors = vec![format!("contract_address '{}': {e}", config.contract_address)];
-                let cm = build_failed_chain(&config, from_block, to_block, errors, "malformed contract address");
-                print_chain_summary(&cm, None, None, None, cm.decimals.unwrap_or(0), &None, &cm.total_supply_at_start_minus_1_provenance.clone());
+                let errors = vec![format!(
+                    "contract_address '{}': {e}",
+                    config.contract_address
+                )];
+                let cm = build_failed_chain(
+                    &config,
+                    from_block,
+                    to_block,
+                    errors,
+                    "malformed contract address",
+                );
+                print_chain_summary(
+                    &cm,
+                    None,
+                    None,
+                    None,
+                    cm.decimals.unwrap_or(0),
+                    &None,
+                    &cm.total_supply_at_start_minus_1_provenance.clone(),
+                );
                 chain_results.push(cm);
                 any_hard_error = true;
                 continue;
@@ -293,9 +346,7 @@ pub async fn run(
             let deploy = config.deployment_block.unwrap();
             (
                 Some(U256::ZERO),
-                format!(
-                    "pre-deployment zero: block {start_minus_1} < deployment_block {deploy}"
-                ),
+                format!("pre-deployment zero: block {start_minus_1} < deployment_block {deploy}"),
             )
         } else {
             let block_id = BlockId::number(start_minus_1);
@@ -332,8 +383,9 @@ pub async fn run(
 
         let historical_supply_pass = supply_start.is_some() && supply_end.is_some();
 
-        let to_decimal_str =
-            |v: Option<U256>| -> Option<String> { v.map(|u| format_token_amount(u, effective_decimals)) };
+        let to_decimal_str = |v: Option<U256>| -> Option<String> {
+            v.map(|u| format_token_amount(u, effective_decimals))
+        };
 
         let cm = ChainMetadata {
             chain: config.chain.clone(),
@@ -507,23 +559,30 @@ mod tests {
     async fn metadata_run_partial_on_bad_chain() {
         let err = run("USDC", &["not_a_chain_xyz".into()], 100, Some(200)).await;
         assert!(err.is_err());
-        let path = crate::report::ensure_out_dir("USDC").unwrap().join("metadata.json");
+        let path = crate::report::ensure_out_dir("USDC")
+            .unwrap()
+            .join("metadata.json");
         assert!(path.is_file());
         let _ = std::fs::remove_file(&path);
     }
 
     #[tokio::test]
     async fn metadata_run_unreachable_rpc() {
-        let _lock = crate::rpc::RPC_ENV_LOCK.lock().unwrap();
         let key = "ALCHEMY_ETHEREUM_URL";
         let saved = std::env::var(key).ok();
-        std::env::set_var(key, "http://127.0.0.1:1");
+        {
+            let _lock = crate::rpc::RPC_ENV_LOCK.lock().unwrap();
+            std::env::set_var(key, "http://127.0.0.1:1");
+        }
         let err = run("USDC", &["ethereum".into()], 24_000_000, Some(24_001_000)).await;
         assert!(err.is_err());
-        if let Some(v) = saved {
-            std::env::set_var(key, v);
-        } else {
-            std::env::remove_var(key);
+        {
+            let _lock = crate::rpc::RPC_ENV_LOCK.lock().unwrap();
+            if let Some(v) = saved {
+                std::env::set_var(key, v);
+            } else {
+                std::env::remove_var(key);
+            }
         }
     }
 }
