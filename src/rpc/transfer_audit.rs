@@ -515,7 +515,7 @@ async fn run_inner(
     };
 
     let mut pairs: Vec<(SupplyAuditRow, QaChain)> =
-        supply_rows.into_iter().zip(qa_chains.into_iter()).collect();
+        supply_rows.into_iter().zip(qa_chains).collect();
     pairs.sort_by(|a, b| a.0.chain.cmp(&b.0.chain));
     let (supply_rows, qa_chains): (Vec<_>, Vec<_>) = pairs.into_iter().unzip();
 
