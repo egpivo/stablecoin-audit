@@ -1,0 +1,4 @@
+window_id,asset,from_utc,to_utc,mean_fng,min_fng,max_fng,dominant_regime,analysis_regime,chain,transfer_event_count,transfer_share,onchain_delta_usdc,net_supply_per_1000_transfers,gross_to_net_ratio,supply_invariant_status,accounting_pass_rate
+usdc_7d_20260501_20260508,USDC,2026-05-01T00:00:00Z,2026-05-08T00:00:00Z,42.14,26,50,Fear,fear,arbitrum,4866248,0.193065,216193007.2999,44427.0426,4.7887,PASS,1.0000
+usdc_7d_20260501_20260508,USDC,2026-05-01T00:00:00Z,2026-05-08T00:00:00Z,42.14,26,50,Fear,fear,base,17208596,0.682740,-40678928.0302,-2363.8726,21.1500,PASS,1.0000
+usdc_7d_20260501_20260508,USDC,2026-05-01T00:00:00Z,2026-05-08T00:00:00Z,42.14,26,50,Fear,fear,ethereum,3130346,0.124195,1219106048.0493,389447.6994,6.7837,PASS,1.0000

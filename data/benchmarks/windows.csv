@@ -1,0 +1,2 @@
+window_id,asset,run_id,from_utc,to_utc,benchmark_dir,chains
+usdc_7d_20260501_20260508,USDC,usdc_7d_20260501_20260508,2026-05-01T00:00:00Z,2026-05-08T00:00:00Z,docs/benchmarks/usdc_7d_20260501_20260508,"ethereum,base,arbitrum"

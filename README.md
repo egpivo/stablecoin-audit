@@ -38,6 +38,18 @@ cargo run -- resolve-window \
 
 Published tables and QA for one USDC run (2026-05-01 → 2026-05-08 UTC): [`docs/benchmarks/usdc_7d_20260501_20260508/`](docs/benchmarks/usdc_7d_20260501_20260508/). Supply invariant **PASS** on all three chains in that window. Future assets can publish the same layout under `docs/benchmarks/<asset>_…/`. Full `decoded_transfers.csv` files stay local under `out/`, not in git.
 
+## Research extension: market-conditioned join (optional)
+
+Python scripts join published benchmark windows with the [Crypto Fear & Greed Index](https://alternative.me/crypto/fear-and-greed-index/) as a **market regime proxy** (association only—not causality, not a safety score). Does **not** change `transfer-audit` Rust code.
+
+```bash
+python3 scripts/fetch_fear_greed.py
+python3 scripts/join_window_sentiment.py
+python3 scripts/build_market_conditioned_panel.py
+```
+
+See [`scripts/README.md`](scripts/README.md), [`data/external/README.md`](data/external/README.md), and [`data/benchmarks/README.md`](data/benchmarks/README.md). Add rows to [`data/benchmarks/windows.csv`](data/benchmarks/windows.csv) for each published `docs/benchmarks/<window_id>/` run.
+
 ## Commands (0.1.0)
 
 | Command | Role |
