@@ -19,4 +19,19 @@ Outputs:
 - `data/external/window_sentiment_summary.csv`
 - `data/benchmarks/market_conditioned_audit.csv`
 
+**Suggest F&G windows** (no RPC):
+
+```bash
+python3 scripts/suggest_fng_windows.py
+```
+
+**Publish** a completed run into `docs/benchmarks/`:
+
+```bash
+chmod +x scripts/publish_benchmark.sh   # once
+./scripts/publish_benchmark.sh usdc_7d_20241117_20241124
+```
+
+See [`data/benchmarks/RUN_ADDITIONAL_WINDOWS.md`](../data/benchmarks/RUN_ADDITIONAL_WINDOWS.md).
+
 Blog figures (separate): `python3 .local/blog/generate_blog_figures.py`

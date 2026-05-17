@@ -48,7 +48,7 @@ python3 scripts/join_window_sentiment.py
 python3 scripts/build_market_conditioned_panel.py
 ```
 
-See [`scripts/README.md`](scripts/README.md), [`data/external/README.md`](data/external/README.md), and [`data/benchmarks/README.md`](data/benchmarks/README.md). Add rows to [`data/benchmarks/windows.csv`](data/benchmarks/windows.csv) for each published `docs/benchmarks/<window_id>/` run.
+See [`scripts/README.md`](scripts/README.md), [`data/external/README.md`](data/external/README.md), and [`data/benchmarks/README.md`](data/benchmarks/README.md). Two additional greed/fear weeks are pre-registered in [`data/benchmarks/windows.csv`](data/benchmarks/windows.csv)—run instructions in [`data/benchmarks/RUN_ADDITIONAL_WINDOWS.md`](data/benchmarks/RUN_ADDITIONAL_WINDOWS.md).
 
 ## Commands (0.1.0)
 
