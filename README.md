@@ -3,11 +3,13 @@
 [![CI](https://github.com/egpivo/stablecoin-audit/actions/workflows/ci.yml/badge.svg)](https://github.com/egpivo/stablecoin-audit/actions/workflows/ci.yml)
 [![codecov](https://codecov.io/github/egpivo/stablecoin-audit/graph/badge.svg?token=mN0h7zLOtR)](https://codecov.io/github/egpivo/stablecoin-audit)
 
-**v0.1** — CLI for **windowed supply-invariant audits** and **cross-chain comparison** of the same stablecoin symbol on multiple EVM deployments. Inside your declared block windows, it checks whether mint/burn aggregates match `totalSupply` at pinned boundaries.
+**v0.1** — For each EVM deployment and declared block window, the CLI tests whether ERC-20 mint/burn aggregates match the change in `totalSupply` at pinned boundaries, then rolls per-chain results into one comparison schema. Runs are keyed by `--asset` and `configs/tokens/<asset>.<chain>.yml`; USDC on Ethereum, Base, and Arbitrum is the first published benchmark, not a hard-coded sole token.
 
-**Not in scope:** reserves, peg, purchasing power, liquidity, oracles, bridge backing, holder census, wallet attribution, or chain safety rankings.
+**Not claimed under this tool:** reserves, peg, purchasing power, liquidity, oracles, bridge backing, holder census, or intent.
 
-## Quick start
+**Another asset:** add YAML per chain, RPC env vars (`.env.example`), then `transfer-audit` / `cross-chain-summary` with `--asset <SYMBOL>`. v0.1 core paths use standard `Transfer` + `totalSupply`; experimental control-topic decoding is issuer-specific today.
+
+## Quick start (USDC)
 
 ```bash
 cargo build
@@ -32,9 +34,9 @@ cargo run -- resolve-window \
   --to 2026-05-08T00:00:00Z
 ```
 
-## Checked-in benchmark
+## Reference benchmark (USDC)
 
-Published tables and QA for USDC (2026-05-01 → 2026-05-08 UTC): [`docs/benchmarks/usdc_7d_20260501_20260508/`](docs/benchmarks/usdc_7d_20260501_20260508/). Supply invariant **PASS** on Ethereum, Base, and Arbitrum for that run. Full transfer CSVs are reproducible locally, not committed.
+Published tables and QA for one USDC run (2026-05-01 → 2026-05-08 UTC): [`docs/benchmarks/usdc_7d_20260501_20260508/`](docs/benchmarks/usdc_7d_20260501_20260508/). Supply invariant **PASS** on all three chains in that window. Future assets can publish the same layout under `docs/benchmarks/<asset>_…/`. Full `decoded_transfers.csv` files stay local under `out/`, not in git.
 
 ## Commands (v0.1)
 

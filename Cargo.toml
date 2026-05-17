@@ -2,7 +2,7 @@
 name = "stablecoin-audit"
 version = "0.1.0"
 edition = "2021"
-description = "Windowed supply-invariant audits and chain-level comparison for stablecoin deployments on EVM chains (v0.1 core; optional experimental fetch/control surfaces)"
+description = "Per-asset EVM window audits: Transfer mint/burn vs totalSupply at pinned blocks; cross-chain rollup on one schema (USDC is the first benchmark)"
 
 [lib]
 name = "stablecoin_audit"
