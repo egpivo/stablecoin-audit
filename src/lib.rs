@@ -259,7 +259,8 @@ mod cli {
     #[derive(Parser)]
     #[command(
         name = "stablecoin-audit",
-        about = "Reproducible windowed supply-invariant audits (v0.1); optional experimental control/fetch surfaces"
+        version,
+        about = "Reproducible windowed supply-invariant audits; optional experimental control/fetch surfaces"
     )]
     struct Cli {
         #[command(subcommand)]

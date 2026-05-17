@@ -3,11 +3,11 @@
 [![CI](https://github.com/egpivo/stablecoin-audit/actions/workflows/ci.yml/badge.svg)](https://github.com/egpivo/stablecoin-audit/actions/workflows/ci.yml)
 [![codecov](https://codecov.io/github/egpivo/stablecoin-audit/graph/badge.svg?token=mN0h7zLOtR)](https://codecov.io/github/egpivo/stablecoin-audit)
 
-**v0.1** — For each EVM deployment and declared block window, the CLI tests whether ERC-20 mint/burn aggregates match the change in `totalSupply` at pinned boundaries, then rolls per-chain results into one comparison schema. Runs are keyed by `--asset` and `configs/tokens/<asset>.<chain>.yml`; USDC on Ethereum, Base, and Arbitrum is the first published benchmark, not a hard-coded sole token.
+**0.1.0** — For each EVM deployment and declared block window, the CLI tests whether ERC-20 mint/burn aggregates match the change in `totalSupply` at pinned boundaries, then rolls per-chain results into one comparison schema. Runs are keyed by `--asset` and `configs/tokens/<asset>.<chain>.yml`; USDC on Ethereum, Base, and Arbitrum is the first published benchmark, not a hard-coded sole token.
 
 **Not claimed under this tool:** reserves, peg, purchasing power, liquidity, oracles, bridge backing, holder census, or intent.
 
-**Another asset:** add YAML per chain, RPC env vars (`.env.example`), then `transfer-audit` / `cross-chain-summary` with `--asset <SYMBOL>`. v0.1 core paths use standard `Transfer` + `totalSupply`; experimental control-topic decoding is issuer-specific today.
+**Another asset:** add YAML per chain, RPC env vars (`.env.example`), then `transfer-audit` / `cross-chain-summary` with `--asset <SYMBOL>`. 0.1.0 core paths use standard `Transfer` + `totalSupply`; experimental control-topic decoding is issuer-specific today.
 
 ## Quick start (USDC)
 
@@ -38,7 +38,7 @@ cargo run -- resolve-window \
 
 Published tables and QA for one USDC run (2026-05-01 → 2026-05-08 UTC): [`docs/benchmarks/usdc_7d_20260501_20260508/`](docs/benchmarks/usdc_7d_20260501_20260508/). Supply invariant **PASS** on all three chains in that window. Future assets can publish the same layout under `docs/benchmarks/<asset>_…/`. Full `decoded_transfers.csv` files stay local under `out/`, not in git.
 
-## Commands (v0.1)
+## Commands (0.1.0)
 
 | Command | Role |
 |---------|------|
