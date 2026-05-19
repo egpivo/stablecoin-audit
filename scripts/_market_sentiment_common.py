@@ -185,6 +185,8 @@ def supply_invariant_status(row: dict[str, str]) -> str:
 
 
 def gross_to_net_ratio(sum_mints_raw: str, sum_burns_raw: str, onchain_delta_raw: str) -> str:
+    if not sum_mints_raw.strip() or not sum_burns_raw.strip():
+        return ""
     mint = int(sum_mints_raw)
     burn = int(sum_burns_raw)
     delta = int(onchain_delta_raw)

@@ -22,16 +22,13 @@ cargo run --release -- resolve-window \
   --from 2024-11-17T00:00:00Z \
   --to 2024-11-24T00:00:00Z
 
-# Use resolve-window output for --window lines:
-cargo run --release -- transfer-audit \
-  --asset USDC \
+cargo run --release -- transfer-audit --asset USDC \
   --run-id usdc_7d_20241117_20241124 \
-  --window arbitrum:FROM:TO \
-  --window base:FROM:TO \
-  --window ethereum:FROM:TO
+  --window arbitrum:275231008:277637793 \
+  --window base:22506127:22808526 \
+  --window ethereum:21203704:21253879
 
-cargo run --release -- cross-chain-summary \
-  --asset USDC \
+cargo run --release -- cross-chain-summary --asset USDC \
   --run-id usdc_7d_20241117_20241124
 
 ./scripts/publish_benchmark.sh usdc_7d_20241117_20241124
