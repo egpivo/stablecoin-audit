@@ -1,0 +1,12 @@
+asset: XSGD
+chain: base
+chain_id: 8453
+contract_address: "0x0A4C9cb2778aB3302996A34BeFCF9a8Bc288C33b"
+decimals: 6
+issuer: StraitsX
+form: native
+rpc_url_env: ALCHEMY_BASE_URL
+deployment_block: null
+expected_interfaces:
+  - ERC20
+  - MintBurn

@@ -26,12 +26,14 @@ RPC_ENV = {
     "ethereum": "ALCHEMY_ETHEREUM_URL",
     "base":     "ALCHEMY_BASE_URL",
     "arbitrum": "ALCHEMY_ARBITRUM_URL",
+    "polygon":  "ALCHEMY_POLYGON_URL",
 }
 
 BLOCKS_PER_DAY = {
     "ethereum": 7200,
     "base":     43200,
     "arbitrum": 345600,
+    "polygon":  43200,
 }
 
 
@@ -76,7 +78,7 @@ def get_logs(url: str, contract: str, from_block: int, to_block: int) -> list:
 def main() -> int:
     load_env()
     p = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
-    p.add_argument("--chain", required=True, choices=list(RPC_ENV), help="ethereum | base | arbitrum")
+    p.add_argument("--chain", required=True, choices=list(RPC_ENV), help="ethereum | base | arbitrum | polygon")
     p.add_argument("--contract", required=True, help="Contract address to probe")
     p.add_argument("--sample-blocks", type=int, default=500,
                    help="Number of recent blocks to sample for volume estimate (default: 500)")

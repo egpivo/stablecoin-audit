@@ -74,11 +74,39 @@ zero-address mint: 1 observed  |  zero-address burn: 0 observed
 
 **Verdict: active.** Moderate volume (~13.7K transfers/7d), sufficient for a meaningful audit window. Zero-address mint convention confirmed. Burn not observed in sample — consistent with infrequent burn events relative to sample size, not a compatibility concern.
 
+#### First audit result — `xsgd_7d_20260513_20260520`
+
+| Field | Value |
+|-------|-------|
+| Blocks | 45920527 – 46222926 |
+| Transfer events | 15,309 |
+| Active senders | 275 |
+| Active recipients | 341 |
+| Mint count | 5 |
+| Burn count | 0 |
+| sum_mints_raw | 307,553,000,000 (= +307,553.00 XSGD) |
+| sum_burns_raw | 0 |
+| net_mint_raw | 307,553,000,000 |
+| Supply at start | 6,617,005.00 XSGD |
+| Supply at end | 6,924,558.00 XSGD |
+| discrepancy_raw | 0 |
+| supply_invariant_pass | **true** |
+| All QA gates | **PASS** |
+| gross_to_net_ratio | 1.0000 (burns = 0) |
+
+All five QA gates pass. Supply invariant holds exactly (discrepancy = 0). Benchmark published to `docs/benchmarks/xsgd_7d_20260513_20260520/`.
+
 ---
 
 ### Polygon — `0xDC3326e71D45186F113a2F448984CA0e8D201995`
 
-Not probed — no `ALCHEMY_POLYGON_URL` in current RPC config. Polygon is the primary native XSGD chain per StraitsX documentation and likely has the highest volume. **Requires adding Polygon RPC support before probing.**
+```
+sample: 50,000 blocks  |  Transfer logs: 524
+estimated 7-day count: ~3,169
+zero-address mint: 2 observed  |  zero-address burn: 0 observed
+```
+
+**Verdict: active.** Moderate volume (~3.2K transfers/7d), lower than Base (~15K) but sufficient for a meaningful audit window. Zero-address mint convention confirmed. Burn not observed in sample — consistent with infrequent burn events. Config created at `configs/tokens/xsgd.polygon.yml`; ready to run a transfer-audit window.
 
 ---
 
@@ -93,9 +121,9 @@ Not probed — no Avalanche RPC config. Lower priority; probe after Polygon.
 | Chain | Address | Status | Note |
 |-------|---------|--------|------|
 | Ethereum | `0x70e8de73...` | **Insufficient volume** | ~80/7d; too sparse |
-| Polygon | `0xDC3326e7...` | **Needs probe** | Primary chain; no RPC config yet |
+| Polygon | `0xDC3326e7...` | **Active** ✓ | ~3.2K/7d; mint convention confirmed |
 | Arbitrum | `0xE333e775...` | **Inactive** | Zero activity in 50K-block sample |
-| Base | `0x0A4C9cb2...` | **Active** ✓ | ~13.7K/7d; mint convention confirmed |
+| Base | `0x0A4C9cb2...` | **Audited** ✓ | 15,309 transfers/7d; all gates PASS; benchmark published |
 | Avalanche | `0xb2F85b7A...` | **Needs probe** | No RPC config yet |
 | Polygon bridged | `0x769434dC...` | **Wrong address** | Deprecated; do not use |
 
@@ -103,9 +131,9 @@ Not probed — no Avalanche RPC config. Lower priority; probe after Polygon.
 
 ## Recommended next steps
 
-1. **Add Base to audit config** — `configs/tokens/xsgd.base.yml` — address and mint/burn convention confirmed.
-2. **Add Polygon RPC** — `ALCHEMY_POLYGON_URL` in `.env` + `configs/tokens/xsgd.polygon.yml` — then re-probe to confirm volume and mint/burn convention before auditing.
+1. ~~**Add Base to audit config**~~ — **Done.** `configs/tokens/xsgd.base.yml` created; first audit window (`xsgd_7d_20260513_20260520`) published with all gates PASS.
+2. ~~**Add Polygon RPC**~~ — **Done.** Probe confirmed ~3.2K/7d, mint convention compatible. `configs/tokens/xsgd.polygon.yml` created. Ready to run a 7-day transfer-audit window.
 3. **Skip Ethereum and Arbitrum** for now — insufficient volume and inactive respectively.
-4. **Do not add XSGD to main audit config** until at least one chain is fully probed and a test window completes.
+4. **Do not add XSGD to main audit config** until the USDC policy-conditioned panel analysis is complete.
 
 **Do not extend the geo-policy panel to XSGD until the USDC policy-conditioned panel analysis is complete.**
