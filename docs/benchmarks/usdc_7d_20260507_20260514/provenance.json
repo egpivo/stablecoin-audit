@@ -2,7 +2,7 @@
   "schema": "transfer-audit-provenance-v1",
   "asset": "USDC",
   "run_id": "usdc_7d_20260507_20260514",
-  "generated_at": "2026-05-19T20:11:00+00:00",
+  "generated_at": "2026-05-20T07:10:57.220330+00:00",
   "per_chain_spans": true,
   "chains": [
     {

@@ -1,10 +1,10 @@
 # Cross-chain window summary — USDC
 
-**Generated:** 2026-05-19T12:17:55.299967+00:00
+**Generated:** 2026-05-20T10:19:16.090800+00:00
 
 **Source transfer-audit run:** `usdc_7d_20260507_20260514` (read `qa_report.json` + `supply_audit.csv` from this run only)
 
-**Transfer-audit QA:** 2026-05-19T20:11:00+00:00 (provenance block generated_at: 2026-05-19T20:11:00+00:00)
+**Transfer-audit QA:** 2026-05-20T07:10:57.220330+00:00 (provenance block generated_at: 2026-05-20T07:10:57.220330+00:00)
 
 **Window:** per-chain native block spans (min from_block in bundle: `25039433`). See each row for `from_block` → resolved end; heights are not comparable across chains.
 
