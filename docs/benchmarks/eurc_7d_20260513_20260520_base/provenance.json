@@ -1,0 +1,19 @@
+{
+  "schema": "transfer-audit-provenance-v1",
+  "asset": "EURC",
+  "run_id": "eurc_7d_20260513_20260520_base",
+  "generated_at": "2026-05-21T07:14:43.120443+00:00",
+  "per_chain_spans": true,
+  "chains": [
+    {
+      "chain": "base",
+      "chain_id": 8453,
+      "contract_address": "0x60a3e35cc302bfa44cb288bc5a4f316fdb1adb42",
+      "from_block": 45920527,
+      "to_block_requested": "46222926",
+      "resolved_to_block": 46222926,
+      "window_start_block_timestamp_rfc3339": "2026-05-13T00:00:01Z",
+      "window_end_block_timestamp_rfc3339": "2026-05-19T23:59:59Z"
+    }
+  ]
+}

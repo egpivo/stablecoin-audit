@@ -1,0 +1,19 @@
+{
+  "schema": "transfer-audit-provenance-v1",
+  "asset": "XSGD",
+  "run_id": "xsgd_7d_20260513_20260520_polygon",
+  "generated_at": "2026-05-21T05:41:06.065772+00:00",
+  "per_chain_spans": true,
+  "chains": [
+    {
+      "chain": "polygon",
+      "chain_id": 137,
+      "contract_address": "0xDC3326e71D45186F113a2F448984CA0e8D201995",
+      "from_block": 86794681,
+      "to_block_requested": "87140281",
+      "resolved_to_block": 87140281,
+      "window_start_block_timestamp_rfc3339": "2026-05-13T00:00:00Z",
+      "window_end_block_timestamp_rfc3339": "2026-05-20T00:00:00Z"
+    }
+  ]
+}

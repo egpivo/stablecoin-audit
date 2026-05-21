@@ -1,0 +1,12 @@
+asset: EURC
+chain: ethereum
+chain_id: 1
+contract_address: "0x1aBaEA1f7C830bD89Acc67eC4af516284b1bC33c"
+decimals: 6
+issuer: Circle Internet Financial
+form: native
+rpc_url_env: ALCHEMY_ETHEREUM_URL
+deployment_block: null
+expected_interfaces:
+  - ERC20
+  - MintBurn

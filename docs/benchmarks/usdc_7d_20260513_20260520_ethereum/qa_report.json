@@ -1,0 +1,31 @@
+{
+  "asset": "USDC",
+  "generated_at": "2026-05-21T06:56:49.274322+00:00",
+  "run_id": "usdc_7d_20260513_20260520_ethereum",
+  "provenance": {
+    "from_block": 25082486,
+    "to_block_requested": "per_chain",
+    "generated_at": "2026-05-21T06:56:49.274322+00:00",
+    "per_chain_spans": true
+  },
+  "chains": [
+    {
+      "chain": "ethereum",
+      "chain_id": 1,
+      "contract_address": "0xA0b86991c6218b36c1d19D4a2e9Eb0cE3606eB48",
+      "from_block": 25082486,
+      "resolved_to_block": 25132717,
+      "gates": {
+        "metadata_call_pass": "PASS",
+        "historical_supply_pass": "PASS",
+        "no_duplicate_logs_pass": "PASS",
+        "transfer_decode_pass": "PASS",
+        "supply_invariant_pass": "PASS",
+        "provenance_stamped": "PASS"
+      },
+      "duplicate_count": 0,
+      "full_decode_error_count": 0,
+      "errors": []
+    }
+  ]
+}
