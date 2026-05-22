@@ -1,0 +1,31 @@
+{
+  "asset": "XSGD",
+  "generated_at": "2026-05-21T05:41:06.065772+00:00",
+  "run_id": "xsgd_7d_20260513_20260520_polygon",
+  "provenance": {
+    "from_block": 86794681,
+    "to_block_requested": "per_chain",
+    "generated_at": "2026-05-21T05:41:06.065772+00:00",
+    "per_chain_spans": true
+  },
+  "chains": [
+    {
+      "chain": "polygon",
+      "chain_id": 137,
+      "contract_address": "0xDC3326e71D45186F113a2F448984CA0e8D201995",
+      "from_block": 86794681,
+      "resolved_to_block": 87140281,
+      "gates": {
+        "metadata_call_pass": "PASS",
+        "historical_supply_pass": "PASS",
+        "no_duplicate_logs_pass": "PASS",
+        "transfer_decode_pass": "PASS",
+        "supply_invariant_pass": "PASS",
+        "provenance_stamped": "PASS"
+      },
+      "duplicate_count": 0,
+      "full_decode_error_count": 0,
+      "errors": []
+    }
+  ]
+}

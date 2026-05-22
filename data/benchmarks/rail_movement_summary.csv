@@ -1,0 +1,7 @@
+window_id,short_window_label,max_abs_price_deviation_bps,mean_abs_price_deviation_bps,sum_abs_net_delta_usdc,sum_abs_net_delta_m_usdc,gross_churn_usdc,gross_churn_m_usdc,max_gross_to_net_ratio,max_gross_to_net_chain,ethereum_net_direction,base_net_direction,arbitrum_net_direction,supply_invariant_status
+usdc_7d_20241117_20241124,Nov 17–24,29.0,9.0,1393806169.13,1393.8062,5929205475.39,5929.2055,13.0929,base,expansion,contraction,expansion,PASS
+usdc_7d_20260218_20260225,Feb 18–25,6.0,3.0,1464462966.19,1464.463,8811768163.81,8811.7682,18.5245,base,expansion,expansion,contraction,PASS
+usdc_7d_20260501_20260508,May 1–8,1.5,0.2,1475977983.38,1475.978,10165692480.05,10165.6925,21.15,base,expansion,contraction,expansion,PASS
+usdc_7d_20260507_20260514,May 7–14,3.0,0.4625,1064489604.22,1064.4896,9857402727.63,9857.4027,14.8002,arbitrum,contraction,contraction,expansion,PASS
+usdc_7d_20260512_20260519,May 12–19,7.6,2.7375,428369684.36,428.3697,10951910723.56,10951.9107,35.198,ethereum,contraction,contraction,expansion,PASS
+usdc_7d_20260514_20260521,May 14–21,8.8,4.1375,150248958.12,150.249,7524245116.03,7524.2451,191.8726,ethereum,expansion,contraction,expansion,PASS

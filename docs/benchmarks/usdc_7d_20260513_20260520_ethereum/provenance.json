@@ -1,0 +1,19 @@
+{
+  "schema": "transfer-audit-provenance-v1",
+  "asset": "USDC",
+  "run_id": "usdc_7d_20260513_20260520_ethereum",
+  "generated_at": "2026-05-21T06:56:49.274322+00:00",
+  "per_chain_spans": true,
+  "chains": [
+    {
+      "chain": "ethereum",
+      "chain_id": 1,
+      "contract_address": "0xA0b86991c6218b36c1d19D4a2e9Eb0cE3606eB48",
+      "from_block": 25082486,
+      "to_block_requested": "25132717",
+      "resolved_to_block": 25132717,
+      "window_start_block_timestamp_rfc3339": "2026-05-13T00:00:11Z",
+      "window_end_block_timestamp_rfc3339": "2026-05-19T23:59:59Z"
+    }
+  ]
+}

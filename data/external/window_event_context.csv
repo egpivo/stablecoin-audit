@@ -1,0 +1,9 @@
+window_id,from_utc,to_utc,event_id,event_date,event_type,event_name,expected_channel,position,days_from_window_start,days_from_window_end
+usdc_7d_20260501_20260508,2026-05-01T00:00:00Z,2026-05-08T00:00:00Z,clarity_act_committee_2026_05_14,2026-05-14,regulatory,CLARITY Act advanced by Senate Banking Committee,regulatory_clarity,post_window,13,6
+usdc_7d_20260501_20260508,2026-05-01T00:00:00Z,2026-05-08T00:00:00Z,fed_chair_warsh_transition_2026_05_19,2026-05-19,macro_policy,Fed Chair Warsh transition context,rate_expectations|risk_appetite,post_window,18,11
+usdc_7d_20260507_20260514,2026-05-07T00:00:00Z,2026-05-14T00:00:00Z,clarity_act_committee_2026_05_14,2026-05-14,regulatory,CLARITY Act advanced by Senate Banking Committee,regulatory_clarity,post_window,7,0
+usdc_7d_20260507_20260514,2026-05-07T00:00:00Z,2026-05-14T00:00:00Z,fed_chair_warsh_transition_2026_05_19,2026-05-19,macro_policy,Fed Chair Warsh transition context,rate_expectations|risk_appetite,post_window,12,5
+usdc_7d_20260514_20260521,2026-05-14T00:00:00Z,2026-05-21T00:00:00Z,clarity_act_committee_2026_05_14,2026-05-14,regulatory,CLARITY Act advanced by Senate Banking Committee,regulatory_clarity,within,0,-7
+usdc_7d_20260514_20260521,2026-05-14T00:00:00Z,2026-05-21T00:00:00Z,fed_chair_warsh_transition_2026_05_19,2026-05-19,macro_policy,Fed Chair Warsh transition context,rate_expectations|risk_appetite,within,5,-2
+usdc_7d_20260512_20260519,2026-05-12T00:00:00Z,2026-05-19T00:00:00Z,clarity_act_committee_2026_05_14,2026-05-14,regulatory,CLARITY Act advanced by Senate Banking Committee,regulatory_clarity,within,2,-5
+usdc_7d_20260512_20260519,2026-05-12T00:00:00Z,2026-05-19T00:00:00Z,fed_chair_warsh_transition_2026_05_19,2026-05-19,macro_policy,Fed Chair Warsh transition context,rate_expectations|risk_appetite,post_window,7,0

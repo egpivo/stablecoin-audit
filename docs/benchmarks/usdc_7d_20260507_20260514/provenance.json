@@ -1,0 +1,39 @@
+{
+  "schema": "transfer-audit-provenance-v1",
+  "asset": "USDC",
+  "run_id": "usdc_7d_20260507_20260514",
+  "generated_at": "2026-05-20T07:10:57.220330+00:00",
+  "per_chain_spans": true,
+  "chains": [
+    {
+      "chain": "arbitrum",
+      "chain_id": 42161,
+      "contract_address": "0xaf88d065e77c8cC2239327C5EDb3A432268e5831",
+      "from_block": 460146890,
+      "to_block_requested": "462559767",
+      "resolved_to_block": 462559767,
+      "window_start_block_timestamp_rfc3339": "2026-05-07T00:00:00Z",
+      "window_end_block_timestamp_rfc3339": "2026-05-14T00:00:00Z"
+    },
+    {
+      "chain": "base",
+      "chain_id": 8453,
+      "contract_address": "0x833589fCD6eDb6E08f4c7C32D4f71b54bdA02913",
+      "from_block": 45661327,
+      "to_block_requested": "45963726",
+      "resolved_to_block": 45963726,
+      "window_start_block_timestamp_rfc3339": "2026-05-07T00:00:01Z",
+      "window_end_block_timestamp_rfc3339": "2026-05-13T23:59:59Z"
+    },
+    {
+      "chain": "ethereum",
+      "chain_id": 1,
+      "contract_address": "0xA0b86991c6218b36c1d19D4a2e9Eb0cE3606eB48",
+      "from_block": 25039433,
+      "to_block_requested": "25089644",
+      "resolved_to_block": 25089644,
+      "window_start_block_timestamp_rfc3339": "2026-05-07T00:00:11Z",
+      "window_end_block_timestamp_rfc3339": "2026-05-13T23:59:59Z"
+    }
+  ]
+}

@@ -27,3 +27,8 @@ target
 .env
 out/
 .cursor/
+.claude/
+
+# Python
+__pycache__/
+*.pyc

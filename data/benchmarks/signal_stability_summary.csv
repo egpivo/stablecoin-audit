@@ -1,0 +1,4 @@
+chain,expansion_windows,contraction_windows,sign_flip_count,min_net_delta_usdc,max_net_delta_usdc,max_gross_to_net_ratio
+ethereum,4,2,2,-863967321.49,1360993435.02,191.8726
+base,1,5,2,-134428255.55,42738845.73,21.15
+arbitrum,5,1,2,-60730685.43,216193007.3,24.6736

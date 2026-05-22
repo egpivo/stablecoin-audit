@@ -1,0 +1,15 @@
+asset,chain,snapshot_utc,route_target,best_route,hop_count,contains_usdc,contains_usdt,contains_weth,route_liquidity_proxy_usd,notes
+EURC,base,2026-05-21T10:40:19Z,USDC,"EURC → USDC (aerodrome, $1,774,476)",1,true,false,false,1774475.98,direct pool
+EURC,base,2026-05-21T10:40:19Z,WETH/ETH,"EURC → WETH (aerodrome, $890,595)",1,false,false,true,890594.76,direct pool
+EURC,ethereum,2026-05-21T10:40:19Z,USDC,"EURC → USDC (uniswap, $5,292,653)",1,true,false,false,5292652.92,direct pool
+EURC,ethereum,2026-05-21T10:40:19Z,WETH/ETH,"EURC → WETH (uniswap, $462,834)",1,false,false,true,462834.3,direct pool
+USDC,arbitrum,2026-05-21T10:40:19Z,USDC,"USDC → USDC (camelot, $955,496)",1,true,false,false,955496.22,direct pool
+USDC,arbitrum,2026-05-21T10:40:19Z,WETH/ETH,"USDC → WETH (uniswap, $51,457,523)",1,false,false,true,51457522.97,direct pool
+USDC,base,2026-05-21T10:40:19Z,USDC,"USDC → USDC (uniswap, $907,420)",1,true,false,false,907420.48,direct pool
+USDC,base,2026-05-21T10:40:19Z,WETH/ETH,USDC → USDC (uniswap) → WETH (2-hop),2,true,false,true,907420.48,no direct WETH pool; routed via USDC
+USDC,ethereum,2026-05-21T10:40:19Z,USDC,not_found,0,false,false,false,0,no USDC or WETH pool above threshold
+USDC,ethereum,2026-05-21T10:40:19Z,WETH/ETH,not_found,0,false,false,false,0,no WETH or USDC pool above threshold
+XSGD,base,2026-05-21T10:40:19Z,USDC,"XSGD → USDC (aerodrome, $448,184)",1,true,false,false,448183.8,direct pool
+XSGD,base,2026-05-21T10:40:19Z,WETH/ETH,"XSGD → WETH (aerodrome, $202,421)",1,false,false,true,202420.98,direct pool
+XSGD,polygon,2026-05-21T10:40:19Z,USDC,"XSGD → USDC (uniswap, $199,568)",1,true,false,false,199568.29,direct pool
+XSGD,polygon,2026-05-21T10:40:19Z,WETH/ETH,"XSGD → WETH (uniswap, $185)",1,false,false,true,184.85,direct pool

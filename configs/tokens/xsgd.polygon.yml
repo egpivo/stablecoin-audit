@@ -1,0 +1,20 @@
+asset: XSGD
+chain: polygon
+chain_id: 137
+contract_address: "0xDC3326e71D45186F113a2F448984CA0e8D201995"
+decimals: 6
+issuer: StraitsX
+form: native
+rpc_url_env: ALCHEMY_POLYGON_URL
+deployment_block: null
+expected_interfaces:
+  - ERC20
+  - MintBurn
+
+# STATUS: probe pending — requires ALCHEMY_POLYGON_URL in .env
+# This is the primary native XSGD chain per StraitsX documentation.
+# Steps before auditing:
+#   1. Add ALCHEMY_POLYGON_URL=https://polygon-mainnet.g.alchemy.com/v2/<key> to .env
+#   2. Run: python scripts/probe_token_volume.py --chain polygon --address 0xDC3326e71D45186F113a2F448984CA0e8D201995 --check-mint-convention
+#   3. Confirm mint/burn convention and 7-day transfer estimate
+#   4. Run transfer-audit for a 7-day window
