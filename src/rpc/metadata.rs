@@ -570,19 +570,14 @@ mod tests {
     async fn metadata_run_unreachable_rpc() {
         let key = "ALCHEMY_ETHEREUM_URL";
         let saved = std::env::var(key).ok();
-        {
-            let _lock = crate::rpc::RPC_ENV_LOCK.lock().unwrap();
-            std::env::set_var(key, "http://127.0.0.1:1");
-        }
+        let _lock = crate::rpc::RPC_ENV_LOCK.lock().await;
+        std::env::set_var(key, "http://127.0.0.1:1");
         let err = run("USDC", &["ethereum".into()], 24_000_000, Some(24_001_000)).await;
         assert!(err.is_err());
-        {
-            let _lock = crate::rpc::RPC_ENV_LOCK.lock().unwrap();
-            if let Some(v) = saved {
-                std::env::set_var(key, v);
-            } else {
-                std::env::remove_var(key);
-            }
+        if let Some(v) = saved {
+            std::env::set_var(key, v);
+        } else {
+            std::env::remove_var(key);
         }
     }
 }

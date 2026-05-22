@@ -1915,10 +1915,8 @@ mod tests {
         let out = tmp_out("prpc");
         let key = "ALCHEMY_ETHEREUM_URL";
         let saved = std::env::var(key).ok();
-        {
-            let _lock = crate::rpc::RPC_ENV_LOCK.lock().unwrap();
-            std::env::set_var(key, "");
-        }
+        let _lock = crate::rpc::RPC_ENV_LOCK.lock().await;
+        std::env::set_var(key, "");
         let (_, supply, qa, hard) = process_chain(
             "USDC",
             "ethereum",
@@ -1933,13 +1931,10 @@ mod tests {
         assert!(hard);
         assert_eq!(supply.chain, "ethereum");
         assert!(!qa.errors.is_empty());
-        {
-            let _lock = crate::rpc::RPC_ENV_LOCK.lock().unwrap();
-            if let Some(v) = saved {
-                std::env::set_var(key, v);
-            } else {
-                std::env::remove_var(key);
-            }
+        if let Some(v) = saved {
+            std::env::set_var(key, v);
+        } else {
+            std::env::remove_var(key);
         }
         let _ = std::fs::remove_dir_all(&out);
     }
@@ -1949,10 +1944,8 @@ mod tests {
         let out = tmp_out("prpcfail");
         let key = "ALCHEMY_ETHEREUM_URL";
         let saved = std::env::var(key).ok();
-        {
-            let _lock = crate::rpc::RPC_ENV_LOCK.lock().unwrap();
-            std::env::set_var(key, "http://127.0.0.1:1");
-        }
+        let _lock = crate::rpc::RPC_ENV_LOCK.lock().await;
+        std::env::set_var(key, "http://127.0.0.1:1");
         let (events, supply, qa, hard) = process_chain(
             "USDC",
             "ethereum",
@@ -1968,13 +1961,10 @@ mod tests {
         assert_eq!(supply.chain, "ethereum");
         assert!(!qa.errors.is_empty() || !supply.metadata_call_pass);
         let _ = events;
-        {
-            let _lock = crate::rpc::RPC_ENV_LOCK.lock().unwrap();
-            if let Some(v) = saved {
-                std::env::set_var(key, v);
-            } else {
-                std::env::remove_var(key);
-            }
+        if let Some(v) = saved {
+            std::env::set_var(key, v);
+        } else {
+            std::env::remove_var(key);
         }
         let _ = std::fs::remove_dir_all(&out);
     }
@@ -2089,10 +2079,8 @@ mod tests {
         let key = "ALCHEMY_ETHEREUM_URL";
         let saved = std::env::var(key).ok();
         let uri = server.uri();
-        {
-            let _lock = crate::rpc::RPC_ENV_LOCK.lock().unwrap();
-            std::env::set_var(key, uri);
-        }
+        let _lock = crate::rpc::RPC_ENV_LOCK.lock().await;
+        std::env::set_var(key, uri);
         let (events, supply, qa, hard) = process_chain(
             "USDC",
             "ethereum",
@@ -2110,13 +2098,10 @@ mod tests {
         assert_eq!(supply.transfer_event_count, 0);
         assert_eq!(supply.supply_invariant_pass, Some(true));
         let _ = qa;
-        {
-            let _lock = crate::rpc::RPC_ENV_LOCK.lock().unwrap();
-            if let Some(v) = saved {
-                std::env::set_var(key, v);
-            } else {
-                std::env::remove_var(key);
-            }
+        if let Some(v) = saved {
+            std::env::set_var(key, v);
+        } else {
+            std::env::remove_var(key);
         }
         let _ = std::fs::remove_dir_all(&out);
     }

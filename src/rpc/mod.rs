@@ -7,7 +7,7 @@ pub mod transfer_checkpoint;
 mod mock_rpc;
 
 #[cfg(test)]
-pub(crate) static RPC_ENV_LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
+pub(crate) static RPC_ENV_LOCK: tokio::sync::Mutex<()> = tokio::sync::Mutex::const_new(());
 #[cfg(feature = "experimental")]
 pub mod control_audit;
 #[cfg(feature = "experimental")]
