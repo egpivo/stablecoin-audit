@@ -1,0 +1,31 @@
+{
+  "asset": "USDC",
+  "generated_at": "2026-05-21T06:56:54.362950+00:00",
+  "run_id": "usdc_7d_20260513_20260520_arbitrum",
+  "provenance": {
+    "from_block": 462214505,
+    "to_block_requested": "per_chain",
+    "generated_at": "2026-05-21T06:56:54.362950+00:00",
+    "per_chain_spans": true
+  },
+  "chains": [
+    {
+      "chain": "arbitrum",
+      "chain_id": 42161,
+      "contract_address": "0xaf88d065e77c8cC2239327C5EDb3A432268e5831",
+      "from_block": 462214505,
+      "resolved_to_block": 464624919,
+      "gates": {
+        "metadata_call_pass": "PASS",
+        "historical_supply_pass": "PASS",
+        "no_duplicate_logs_pass": "PASS",
+        "transfer_decode_pass": "PASS",
+        "supply_invariant_pass": "FAIL",
+        "provenance_stamped": "PASS"
+      },
+      "duplicate_count": 0,
+      "full_decode_error_count": 0,
+      "errors": []
+    }
+  ]
+}

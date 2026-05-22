@@ -67,3 +67,17 @@ See [`scripts/README.md`](scripts/README.md), [`data/external/README.md`](data/e
 
 - **Supply invariant FAIL** means the accounting identity did not hold under this tool’s definitions — not automatically fraud or depeg.
 - **Cross-chain tables** compare per-deployment metrics on one schema; summing `totalSupply` across chains is not circulating supply (bridged inventory double-counts).
+
+## Blog post evidence
+
+This repo supports the post "Local-Currency Stablecoins Still Ride Dollar Liquidity Rails." The accounting layer—supply invariant checks across USDC, EURC, and XSGD deployments—uses the same CLI described above. The liquidity layer adds a DexScreener pool snapshot to ask what on-chain counterpart a holder exits against.
+
+| Artifact | What it shows |
+|----------|--------------|
+| [`data/benchmarks/cross_asset_geo_panel_summary.csv`](data/benchmarks/cross_asset_geo_panel_summary.csv) | Transfer counts, mint/burn, gross-to-net ratio, and invariant status for all seven canonical asset-chain pairs |
+| [`data/benchmarks/rail_movement_summary.csv`](data/benchmarks/rail_movement_summary.csv) | USDC price deviation (bps) vs. net supply movement across six audited windows |
+| [`docs/benchmarks/xsgd_7d_20260513_20260520/supply_audit.md`](docs/benchmarks/xsgd_7d_20260513_20260520/supply_audit.md) | XSGD Base canonical window — supply invariant PASS, zero burns |
+| [`docs/benchmarks/eurc_7d_20260513_20260520_ethereum/supply_audit.md`](docs/benchmarks/eurc_7d_20260513_20260520_ethereum/supply_audit.md) | EURC Ethereum canonical window — supply invariant PASS, 56× gross-to-net ratio |
+| [`docs/evidence/blog_evidence_links_v1.md`](docs/evidence/blog_evidence_links_v1.md) | Full claim-to-artifact map (C1–C20) with exact rows, figure evidence, quality grades, and recommended blog links |
+
+The accounting artifacts above are fully committed. The liquidity-surface tables (pair-dependence by asset-chain, route-dependence, raw pool data) are generated from a DexScreener API snapshot; they are not yet committed to the repo. Figures are pre-generated. Full detail—including exact column references, which claims are supported at what strength, and pending commit status for each file—is in [`docs/evidence/blog_evidence_links_v1.md`](docs/evidence/blog_evidence_links_v1.md).

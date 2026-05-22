@@ -1,0 +1,19 @@
+{
+  "schema": "transfer-audit-provenance-v1",
+  "asset": "USDC",
+  "run_id": "usdc_7d_20260513_20260520_arbitrum",
+  "generated_at": "2026-05-21T06:56:54.362950+00:00",
+  "per_chain_spans": true,
+  "chains": [
+    {
+      "chain": "arbitrum",
+      "chain_id": 42161,
+      "contract_address": "0xaf88d065e77c8cC2239327C5EDb3A432268e5831",
+      "from_block": 462214505,
+      "to_block_requested": "464624919",
+      "resolved_to_block": 464624919,
+      "window_start_block_timestamp_rfc3339": "2026-05-13T00:00:00Z",
+      "window_end_block_timestamp_rfc3339": "2026-05-20T00:00:00Z"
+    }
+  ]
+}
