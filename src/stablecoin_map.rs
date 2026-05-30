@@ -130,6 +130,20 @@ async fn build_inventory(client: &reqwest::Client, output_dir: &Path) -> Result<
         .error_for_status()?
         .json::<DefiLlamaResponse>()
         .await?;
+    build_inventory_rows(
+        payload,
+        output_dir,
+        Path::new("configs/tokens"),
+        Utc::now().to_rfc3339_opts(SecondsFormat::Secs, true),
+    )
+}
+
+fn build_inventory_rows(
+    payload: DefiLlamaResponse,
+    output_dir: &Path,
+    config_dir: &Path,
+    fetched_at: String,
+) -> Result<Vec<InventoryRow>> {
     let mut by_symbol: HashMap<String, DefiLlamaAsset> = HashMap::new();
     for asset in payload.pegged_assets {
         let Some(symbol) = asset.symbol.clone() else {
@@ -144,9 +158,8 @@ async fn build_inventory(client: &reqwest::Client, output_dir: &Path) -> Result<
         }
     }
 
-    let addresses = load_config_addresses(Path::new("configs/tokens"))?;
+    let addresses = load_config_addresses(config_dir)?;
     let liquidity = load_observed_liquidity(output_dir)?;
-    let fetched_at = Utc::now().to_rfc3339_opts(SecondsFormat::Secs, true);
     let mut rows = Vec::new();
 
     for symbol in REPRESENTATIVE_SYMBOLS {
@@ -262,7 +275,24 @@ async fn build_transfer_volume(
         .error_for_status()?
         .json::<Value>()
         .await?;
-    let extracted_at = Utc::now().to_rfc3339_opts(SecondsFormat::Secs, true);
+    Ok(build_transfer_volume_rows(
+        payload,
+        inventory,
+        start,
+        end,
+        source,
+        Utc::now().to_rfc3339_opts(SecondsFormat::Secs, true),
+    ))
+}
+
+fn build_transfer_volume_rows(
+    payload: Value,
+    inventory: &[InventoryRow],
+    start: &str,
+    end: &str,
+    source: String,
+    extracted_at: String,
+) -> Vec<TransferVolumeRow> {
     let mut rows = Vec::new();
 
     for item in inventory {
@@ -311,7 +341,7 @@ async fn build_transfer_volume(
             notes,
         });
     }
-    Ok(rows)
+    rows
 }
 
 fn write_transfer_volume(rows: &[TransferVolumeRow], output_dir: &Path) -> Result<()> {
@@ -737,6 +767,7 @@ fn comma0(value: f64) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::time::{SystemTime, UNIX_EPOCH};
 
     #[test]
     fn maps_peg_currency() {
@@ -765,5 +796,401 @@ mod tests {
             normalize_counterpart_class("USDT", "USD_STABLE"),
             "USDT/USD-stable"
         );
+    }
+
+    #[test]
+    fn formats_asset_values_and_chains() {
+        let asset = DefiLlamaAsset {
+            symbol: Some("TEST".to_string()),
+            name: Some("Test USD".to_string()),
+            peg_type: Some("peggedUSD".to_string()),
+            peg_mechanism: Some("fiat-backed".to_string()),
+            circulating: Some(HashMap::from([(
+                "peggedUSD".to_string(),
+                Value::from(1_500_000.0),
+            )])),
+            price: Some(0.999),
+            chains: Some(vec![
+                "Ethereum".to_string(),
+                "Base".to_string(),
+                "Arbitrum".to_string(),
+            ]),
+            chain_circulating: None,
+        };
+
+        assert_eq!(native_circulating(&asset), 1_500_000.0);
+        assert_eq!(usd_value(&asset), 1_498_500.0);
+        assert_eq!(format_chains(&asset, 2), "Ethereum, Base; +1 more");
+        assert_eq!(country_zone("SGD"), "Singapore / SGD");
+        assert_eq!(country_zone("ZZZ"), "Currency zone");
+        assert_eq!(issuer("USDC", "fallback"), "Circle");
+        assert_eq!(issuer("UNKNOWN", "fallback"), "fallback");
+        assert_eq!(
+            token_category("USDe"),
+            "synthetic_crypto_collateral_or_yield_bearing"
+        );
+        assert_eq!(token_category("XSGD"), "non_usd_fiat_linked_rail");
+        assert_eq!(token_category("USDT"), "global_usd_rail");
+    }
+
+    #[test]
+    fn derives_target_asset_and_counts_classes() {
+        let pair = LiquidityPairInput {
+            asset: "EURC".to_string(),
+            chain: "base".to_string(),
+            snapshot_utc: "2026-05-21T00:00:00Z".to_string(),
+            pool_address: "0xpool".to_string(),
+            dex: "aerodrome".to_string(),
+            token0_symbol: "USDC".to_string(),
+            token1_symbol: "EURC".to_string(),
+            reserve_usd: "1000".to_string(),
+            counterpart_class: "USDC".to_string(),
+            source: "dexscreener".to_string(),
+        };
+        assert_eq!(target_asset(&pair), "USDC");
+        assert_eq!(title_chain("base"), "Base");
+        assert_eq!(title_chain(""), "");
+        assert_eq!(parse_f64("bad"), 0.0);
+
+        let summary = PairDependenceInput {
+            asset: "EURC".to_string(),
+            chain: "base".to_string(),
+            snapshot_utc: "2026-05-21T00:00:00Z".to_string(),
+            total_liquidity_usd: "1000".to_string(),
+            usdc_liquidity_usd: "600".to_string(),
+            usdc_share: "0.6".to_string(),
+            usd_stable_share: "0.6".to_string(),
+            eur_stable_share: "0".to_string(),
+            weth_share: "0.3".to_string(),
+            other_share: "bad".to_string(),
+            top_pair: "EURC/USDC (uniswap)".to_string(),
+            top_pair_liquidity_usd: "600".to_string(),
+            top_pair_share: "0.6".to_string(),
+            pool_count: "2".to_string(),
+            notes: None,
+        };
+        assert_eq!(count_counterpart_classes(&summary), "3");
+    }
+
+    #[test]
+    fn writes_dependency_package_from_csv_fixtures() {
+        let temp = temp_dir("stablecoin-map-writers");
+        let input_dir = temp.join("input");
+        let output_dir = temp.join("output");
+        fs::create_dir_all(&input_dir).unwrap();
+        fs::create_dir_all(&output_dir).unwrap();
+
+        let summary_path = input_dir.join("summary.csv");
+        fs::write(
+            &summary_path,
+            concat!(
+                "asset,chain,snapshot_utc,pool_count,total_liquidity_usd,usd_stable_liquidity_usd,usdc_liquidity_usd,usdt_liquidity_usd,weth_liquidity_usd,eur_stable_liquidity_usd,btc_liquidity_usd,other_liquidity_usd,usd_stable_share,usdc_share,usdt_share,weth_share,eur_stable_share,btc_share,other_share,top_pair,top_pair_liquidity_usd,top_pair_share,notes\n",
+                "EURC,base,2026-05-21T00:00:00Z,2,1000,700,600,100,200,0,0,100,0.7,0.6,0.1,0.2,0,0,0.1,EURC/USDC (uniswap),600,0.6,\n"
+            ),
+        )
+        .unwrap();
+        assert_eq!(
+            write_dependency_summary(&summary_path, &output_dir).unwrap(),
+            1
+        );
+
+        let edges_path = input_dir.join("pairs.csv");
+        fs::write(
+            &edges_path,
+            concat!(
+                "asset,chain,snapshot_utc,pool_address,dex,token0,token1,token0_symbol,token1_symbol,reserve_usd,volume_24h_usd,is_usd_stable_pair,is_usdc_pair,is_usdt_pair,is_weth_pair,is_eur_stable_pair,is_btc_pair,counterpart_class,source\n",
+                "EURC,base,2026-05-21T00:00:00Z,0xpool1,uniswap,0xeurc,0xusdc,EURC,USDC,600,10,true,true,false,false,false,false,USDC,dexscreener\n",
+                "EURC,base,2026-05-21T00:00:00Z,0xpool2,uniswap,0xeurc,0xweth,EURC,WETH,400,5,false,false,false,true,false,false,WETH_ETH,dexscreener\n"
+            ),
+        )
+        .unwrap();
+        assert_eq!(write_dependency_edges(&edges_path, &output_dir).unwrap(), 2);
+
+        let mut summary_reader =
+            csv::Reader::from_path(output_dir.join("stablecoin_dependency_summary.csv")).unwrap();
+        let summary_rows = summary_reader
+            .deserialize::<HashMap<String, String>>()
+            .collect::<std::result::Result<Vec<_>, _>>()
+            .unwrap();
+        assert_eq!(summary_rows[0]["deployment_id"], "eurc_base");
+        assert_eq!(summary_rows[0]["chain"], "Base");
+        assert_eq!(summary_rows[0]["top_counterpart"], "USDC");
+        assert_eq!(summary_rows[0]["n_counterpart_classes"], "4");
+
+        let mut edge_reader =
+            csv::Reader::from_path(output_dir.join("stablecoin_dependency_edges.csv")).unwrap();
+        let edge_rows = edge_reader
+            .deserialize::<HashMap<String, String>>()
+            .collect::<std::result::Result<Vec<_>, _>>()
+            .unwrap();
+        assert_eq!(edge_rows.len(), 2);
+        assert_eq!(edge_rows[0]["target_asset"], "USDC");
+        assert_eq!(edge_rows[0]["source_asset_pool_share"], "0.60000000");
+        assert_eq!(edge_rows[1]["target_counterpart_class"], "WETH");
+
+        fs::remove_dir_all(temp).unwrap();
+    }
+
+    #[test]
+    fn run_skip_network_writes_local_package() {
+        let temp = temp_dir("stablecoin-map-run");
+        let output_dir = temp.join("output");
+        fs::create_dir_all(&temp).unwrap();
+        let summary_path = temp.join("summary.csv");
+        let pairs_path = temp.join("pairs.csv");
+        fs::write(
+            &summary_path,
+            concat!(
+                "asset,chain,snapshot_utc,pool_count,total_liquidity_usd,usd_stable_liquidity_usd,usdc_liquidity_usd,usdt_liquidity_usd,weth_liquidity_usd,eur_stable_liquidity_usd,btc_liquidity_usd,other_liquidity_usd,usd_stable_share,usdc_share,usdt_share,weth_share,eur_stable_share,btc_share,other_share,top_pair,top_pair_liquidity_usd,top_pair_share,notes\n",
+                "XSGD,polygon,2026-05-21T00:00:00Z,1,500,400,400,0,0,0,0,100,0.8,0.8,0,0,0,0,0.2,XSGD/USDC (quickswap),400,0.8,fixture note\n"
+            ),
+        )
+        .unwrap();
+        fs::write(
+            &pairs_path,
+            concat!(
+                "asset,chain,snapshot_utc,pool_address,dex,token0,token1,token0_symbol,token1_symbol,reserve_usd,volume_24h_usd,is_usd_stable_pair,is_usdc_pair,is_usdt_pair,is_weth_pair,is_eur_stable_pair,is_btc_pair,counterpart_class,source\n",
+                "XSGD,polygon,2026-05-21T00:00:00Z,0xpool,quickswap,0xxsgd,0xusdc,XSGD,USDC,500,10,true,true,false,false,false,false,USDC,dexscreener\n"
+            ),
+        )
+        .unwrap();
+
+        let runtime = tokio::runtime::Builder::new_current_thread()
+            .enable_all()
+            .build()
+            .unwrap();
+        runtime
+            .block_on(run(PackageOptions {
+                output_dir: output_dir.clone(),
+                dependency_summary: summary_path,
+                liquidity_pairs: pairs_path,
+                artemis_start: "2026-04-28".to_string(),
+                artemis_end: "2026-05-27".to_string(),
+                skip_network: true,
+            }))
+            .unwrap();
+
+        assert!(output_dir
+            .join("stablecoin_dependency_summary.csv")
+            .is_file());
+        assert!(output_dir.join("stablecoin_dependency_edges.csv").is_file());
+        assert!(!output_dir
+            .join("global_stablecoin_inventory_v1.csv")
+            .exists());
+
+        fs::remove_dir_all(temp).unwrap();
+    }
+
+    #[test]
+    fn builds_inventory_rows_from_payload_and_local_artifacts() {
+        let temp = temp_dir("stablecoin-map-inventory");
+        let output_dir = temp.join("output");
+        let config_dir = temp.join("configs");
+        fs::create_dir_all(&output_dir).unwrap();
+        fs::create_dir_all(&config_dir).unwrap();
+        fs::write(
+            output_dir.join("stablecoin_dependency_summary.csv"),
+            concat!(
+                "asset,total_observed_dex_liquidity_usd\n",
+                "USDC,1000\n",
+                "USDC,250.5\n",
+                "XSGD,not-a-number\n"
+            ),
+        )
+        .unwrap();
+        fs::write(
+            config_dir.join("usdc.base.yml"),
+            concat!(
+                "asset: USDC\n",
+                "chain: base\n",
+                "contract_address: \"0xabc\"\n"
+            ),
+        )
+        .unwrap();
+        fs::write(config_dir.join("ignore.txt"), "not yaml").unwrap();
+
+        let payload = DefiLlamaResponse {
+            pegged_assets: vec![
+                DefiLlamaAsset {
+                    symbol: Some("USDC".to_string()),
+                    name: Some("USD Coin small".to_string()),
+                    peg_type: Some("peggedUSD".to_string()),
+                    peg_mechanism: Some("fiat-backed".to_string()),
+                    circulating: Some(HashMap::from([(
+                        "peggedUSD".to_string(),
+                        Value::from(10.0),
+                    )])),
+                    price: Some(1.0),
+                    chains: Some(vec!["Base".to_string()]),
+                    chain_circulating: None,
+                },
+                DefiLlamaAsset {
+                    symbol: Some("USDC".to_string()),
+                    name: Some("USD Coin".to_string()),
+                    peg_type: Some("peggedUSD".to_string()),
+                    peg_mechanism: Some("fiat-backed".to_string()),
+                    circulating: Some(HashMap::from([(
+                        "peggedUSD".to_string(),
+                        Value::from(2_000_000.0),
+                    )])),
+                    price: Some(1.0),
+                    chains: Some((0..13).map(|i| format!("Chain{i}")).collect()),
+                    chain_circulating: None,
+                },
+                DefiLlamaAsset {
+                    symbol: Some("EURI".to_string()),
+                    name: Some("Tiny Euro".to_string()),
+                    peg_type: Some("peggedEUR".to_string()),
+                    peg_mechanism: None,
+                    circulating: Some(HashMap::from([(
+                        "peggedEUR".to_string(),
+                        Value::from(50_000.0),
+                    )])),
+                    price: Some(1.0),
+                    chains: None,
+                    chain_circulating: Some(HashMap::from([(
+                        "Gnosis".to_string(),
+                        Value::from(1.0),
+                    )])),
+                },
+                DefiLlamaAsset {
+                    symbol: None,
+                    name: Some("No symbol".to_string()),
+                    peg_type: Some("peggedUSD".to_string()),
+                    peg_mechanism: None,
+                    circulating: None,
+                    price: None,
+                    chains: None,
+                    chain_circulating: None,
+                },
+            ],
+        };
+
+        let rows = build_inventory_rows(
+            payload,
+            &output_dir,
+            &config_dir,
+            "2026-05-30T00:00:00Z".to_string(),
+        )
+        .unwrap();
+        assert_eq!(rows.len(), 2);
+
+        let usdc = rows.iter().find(|row| row.symbol == "USDC").unwrap();
+        assert_eq!(usdc.name, "USD Coin");
+        assert_eq!(usdc.confidence_grade, "high");
+        assert_eq!(usdc.contract_addresses_if_available, "Base:0xabc");
+        assert_eq!(
+            usdc.observed_dex_liquidity_if_available,
+            "$1,251 observed DEX TVL in project DexScreener snapshot"
+        );
+        assert!(usdc.chains_or_deployments.ends_with("; +1 more"));
+
+        let euri = rows.iter().find(|row| row.symbol == "EURI").unwrap();
+        assert_eq!(euri.confidence_grade, "low");
+        assert_eq!(euri.chains_or_deployments, "Gnosis");
+        assert!(euri
+            .notes
+            .contains("Peg mechanism reported by DefiLlama: not reported."));
+
+        write_inventory(&rows, &output_dir).unwrap();
+        let mut reader =
+            csv::Reader::from_path(output_dir.join("global_stablecoin_inventory_v1.csv")).unwrap();
+        let written = reader
+            .deserialize::<InventoryRow>()
+            .collect::<std::result::Result<Vec<_>, _>>()
+            .unwrap();
+        assert_eq!(written.len(), 2);
+
+        fs::remove_dir_all(temp).unwrap();
+    }
+
+    #[test]
+    fn builds_transfer_rows_for_supported_and_unavailable_tokens() {
+        let inventory = vec![
+            InventoryRow {
+                symbol: "USDC".to_string(),
+                name: "USD Coin".to_string(),
+                peg_currency: "USD".to_string(),
+                country_or_currency_zone: "United States / USD zone".to_string(),
+                issuer_or_protocol: "Circle".to_string(),
+                market_cap_or_circulating_supply: String::new(),
+                supply_source: String::new(),
+                chains_or_deployments: String::new(),
+                contract_addresses_if_available: String::new(),
+                observed_dex_liquidity_if_available: String::new(),
+                source_url_or_artifact: String::new(),
+                source_timestamp: String::new(),
+                confidence_grade: String::new(),
+                notes: String::new(),
+            },
+            InventoryRow {
+                symbol: "XSGD".to_string(),
+                name: "XSGD".to_string(),
+                peg_currency: "SGD".to_string(),
+                country_or_currency_zone: "Singapore / SGD".to_string(),
+                issuer_or_protocol: "StraitsX".to_string(),
+                market_cap_or_circulating_supply: String::new(),
+                supply_source: String::new(),
+                chains_or_deployments: String::new(),
+                contract_addresses_if_available: String::new(),
+                observed_dex_liquidity_if_available: String::new(),
+                source_url_or_artifact: String::new(),
+                source_timestamp: String::new(),
+                confidence_grade: String::new(),
+                notes: String::new(),
+            },
+        ];
+        let payload = serde_json::json!({
+            "data": {
+                "symbols": {
+                    "usdc": {
+                        ARTEMIS_METRIC: [
+                            {"val": 10.0},
+                            {"val": 20.5},
+                            {"val": null},
+                            {"other": 99.0}
+                        ]
+                    },
+                    "xsgd": {
+                        ARTEMIS_METRIC: "unsupported"
+                    }
+                }
+            }
+        });
+
+        let rows = build_transfer_volume_rows(
+            payload,
+            &inventory,
+            "2026-04-28",
+            "2026-05-27",
+            "https://example.test/source".to_string(),
+            "2026-05-30T00:00:00Z".to_string(),
+        );
+        assert_eq!(rows.len(), 2);
+        assert_eq!(rows[0].total_30d_transfer_volume, "30.500000");
+        assert_eq!(rows[0].non_null_days, 2);
+        assert_eq!(rows[0].missing_days, 28);
+        assert_eq!(rows[0].token_category, "global_usd_rail");
+        assert_eq!(rows[1].total_30d_transfer_volume, "");
+        assert_eq!(rows[1].token_category, "non_usd_fiat_linked_rail");
+        assert!(rows[1]
+            .notes
+            .contains("Metric unavailable response: \"unsupported\""));
+
+        let temp = temp_dir("stablecoin-map-transfer");
+        fs::create_dir_all(&temp).unwrap();
+        write_transfer_volume(&rows, &temp).unwrap();
+        assert!(temp
+            .join("stablecoin_transfer_volume_selected_rails_v1.csv")
+            .is_file());
+        fs::remove_dir_all(temp).unwrap();
+    }
+
+    fn temp_dir(prefix: &str) -> PathBuf {
+        let nanos = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .unwrap()
+            .as_nanos();
+        std::env::temp_dir().join(format!("{prefix}-{}-{nanos}", std::process::id()))
     }
 }
