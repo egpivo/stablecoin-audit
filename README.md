@@ -58,6 +58,7 @@ See [`scripts/README.md`](scripts/README.md), [`data/external/README.md`](data/e
 | `cross-chain-summary` | Roll up one `run_id` into `cross_chain_summary.{md,json}` |
 | `resolve-window` | UTC interval → per-chain block bounds |
 | `metadata` | IERC-20 metadata + pinned `totalSupply` probes |
+| `stablecoin-map-package` | Build stablecoin-map CSV evidence package from benchmark data, DefiLlama, and Artemis |
 
 **Resume:** same `--run-id` and `--window` args continue from `checkpoint/`; `--fresh` clears checkpoints. Default `--chunk-size` is 500 blocks per `eth_getLogs` call (5 retries on transient RPC errors).
 
@@ -68,9 +69,9 @@ See [`scripts/README.md`](scripts/README.md), [`data/external/README.md`](data/e
 - **Supply invariant FAIL** means the accounting identity did not hold under this tool’s definitions — not automatically fraud or depeg.
 - **Cross-chain tables** compare per-deployment metrics on one schema; summing `totalSupply` across chains is not circulating supply (bridged inventory double-counts).
 
-## Blog post evidence
+## Blog evidence
 
-This repo supports the post "Local-Currency Stablecoins Still Ride Dollar Liquidity Rails." The accounting layer—supply invariant checks across USDC, EURC, and XSGD deployments—uses the same CLI described above. The liquidity layer adds a DexScreener pool snapshot to ask what on-chain counterpart a holder exits against.
+This repo supports stablecoin-liquidity articles with two layers: supply-invariant audit artifacts and DexScreener liquidity snapshots.
 
 | Artifact | What it shows |
 |----------|--------------|
@@ -80,4 +81,12 @@ This repo supports the post "Local-Currency Stablecoins Still Ride Dollar Liquid
 | [`docs/benchmarks/eurc_7d_20260513_20260520_ethereum/supply_audit.md`](docs/benchmarks/eurc_7d_20260513_20260520_ethereum/supply_audit.md) | EURC Ethereum canonical window — supply invariant PASS, 56× gross-to-net ratio |
 | [`docs/evidence/blog_evidence_links_v1.md`](docs/evidence/blog_evidence_links_v1.md) | Full claim-to-artifact map (C1–C20) with exact rows, figure evidence, quality grades, and recommended blog links |
 
-The accounting artifacts above are fully committed. The liquidity-surface tables (pair-dependence by asset-chain, route-dependence, raw pool data) are generated from a DexScreener API snapshot; they are not yet committed to the repo. Figures are pre-generated. Full detail—including exact column references, which claims are supported at what strength, and pending commit status for each file—is in [`docs/evidence/blog_evidence_links_v1.md`](docs/evidence/blog_evidence_links_v1.md).
+Stablecoin-map package CSVs can be regenerated from Rust:
+
+```bash
+cargo run -- stablecoin-map-package
+# local-only dependency CSVs, no DefiLlama/Artemis calls:
+cargo run -- stablecoin-map-package --skip-network
+```
+
+Generated map-package outputs land in `data/benchmarks/`: `global_stablecoin_inventory_v1.csv`, `stablecoin_transfer_volume_selected_rails_v1.csv`, `stablecoin_dependency_summary.csv`, and `stablecoin_dependency_edges.csv`.

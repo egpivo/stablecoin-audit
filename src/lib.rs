@@ -3,6 +3,7 @@ pub mod decode;
 pub mod fetch;
 pub mod report;
 pub mod rpc;
+pub mod stablecoin_map;
 
 #[cfg(feature = "experimental")]
 pub mod control_events;
@@ -199,6 +200,24 @@ mod cli {
                 validate_identifier(&run_id, "--run-id")?;
                 crate::rpc::cross_chain_summary::run(&asset, &run_id)?;
             }
+            Commands::StablecoinMapPackage {
+                output_dir,
+                dependency_summary,
+                liquidity_pairs,
+                artemis_start,
+                artemis_end,
+                skip_network,
+            } => {
+                crate::stablecoin_map::run(crate::stablecoin_map::PackageOptions {
+                    output_dir,
+                    dependency_summary,
+                    liquidity_pairs,
+                    artemis_start,
+                    artemis_end,
+                    skip_network,
+                })
+                .await?;
+            }
             #[cfg(feature = "experimental")]
             Commands::ControlAudit {
                 asset,
@@ -330,6 +349,23 @@ mod cli {
             asset: String,
             #[arg(long)]
             run_id: String,
+        },
+        StablecoinMapPackage {
+            #[arg(long, default_value = "data/benchmarks")]
+            output_dir: std::path::PathBuf,
+            #[arg(
+                long,
+                default_value = "data/benchmarks/stablecoin_pair_dependence_summary.csv"
+            )]
+            dependency_summary: std::path::PathBuf,
+            #[arg(long, default_value = "data/benchmarks/stablecoin_liquidity_pairs.csv")]
+            liquidity_pairs: std::path::PathBuf,
+            #[arg(long, default_value = "2026-04-28")]
+            artemis_start: String,
+            #[arg(long, default_value = "2026-05-27")]
+            artemis_end: String,
+            #[arg(long)]
+            skip_network: bool,
         },
         #[cfg(feature = "experimental")]
         ControlAudit {
