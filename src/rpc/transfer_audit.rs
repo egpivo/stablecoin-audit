@@ -11,6 +11,10 @@ use serde::{Deserialize, Serialize};
 use std::collections::HashSet;
 use std::str::FromStr;
 
+use crate::artifact::{
+    transfer_audit_manifest::{ManifestChainInput, TransferAuditManifestParams},
+    write_transfer_audit_manifest,
+};
 use crate::config::{load_single_token_config, TokenConfig};
 use crate::decode::{decode_transfer_log, dedup_transfer_events, sample_decode_qa};
 use crate::fetch::{fetch_transfer_logs_incremental, FetchParams};
@@ -540,11 +544,6 @@ async fn run_inner(
     println!(
         "  decoded_transfers.csv, supply_audit.csv, supply_audit.md, qa_report.json,\n  provenance.json, summary.md"
     );
-    println!(
-        "\nNext (≥2 chains): cargo run -- cross-chain-summary --asset {} --run-id {}",
-        asset.to_uppercase(),
-        run_id
-    );
 
     if any_hard_error {
         println!(
@@ -552,13 +551,33 @@ async fn run_inner(
             out_dir.display()
         );
         anyhow::bail!(
-            "one or more chains had hard errors; partial outputs written under {}",
+            "one or more chains had hard errors; partial outputs written under {} (no artifact_manifest.json — run not API-listed until successful)",
             out_dir.display()
         );
     }
 
     transfer_checkpoint::remove_checkpoint_dir(&out_dir)?;
-    println!("Checkpoint cleared (run completed successfully).");
+    println!("Checkpoint cleared.");
+
+    write_transfer_audit_manifest(
+        &out_dir,
+        &transfer_audit_manifest_params(
+            asset,
+            &run_id,
+            &generated_at,
+            plan.per_chain_spans,
+            &provenance,
+            &supply_rows,
+            &qa_chains,
+        ),
+    )?;
+
+    println!("  artifact_manifest.json (run complete — discoverable via API)");
+    println!(
+        "\nNext (≥2 chains): cargo run -- cross-chain-summary --asset {} --run-id {}",
+        asset.to_uppercase(),
+        run_id
+    );
 
     Ok(())
 }
@@ -883,6 +902,46 @@ pub(crate) fn write_run_artifacts(
         qa_chains,
     )?;
     Ok(())
+}
+
+fn transfer_audit_manifest_params(
+    asset: &str,
+    run_id: &str,
+    generated_at: &str,
+    per_chain_spans: bool,
+    provenance: &ProvenanceBlock,
+    supply_rows: &[SupplyAuditRow],
+    qa_chains: &[QaChain],
+) -> TransferAuditManifestParams {
+    let mut warnings = Vec::new();
+    let chains: Vec<ManifestChainInput> = supply_rows
+        .iter()
+        .zip(qa_chains.iter())
+        .map(|(row, qa)| {
+            for err in &qa.errors {
+                warnings.push(format!("{}: {err}", row.chain));
+            }
+            ManifestChainInput {
+                chain: row.chain.clone(),
+                from_block: row.from_block,
+                to_block_requested: row.to_block_requested.clone(),
+                window_start_rfc3339: row.window_start_block_timestamp_rfc3339.clone(),
+                window_end_rfc3339: row.window_end_block_timestamp_rfc3339.clone(),
+                errors: qa.errors.clone(),
+            }
+        })
+        .collect();
+
+    TransferAuditManifestParams {
+        asset: asset.to_string(),
+        run_id: run_id.to_string(),
+        generated_at: generated_at.to_string(),
+        per_chain_spans,
+        provenance_from_block: provenance.from_block,
+        provenance_to_block_requested: provenance.to_block_requested.clone(),
+        chains,
+        warnings,
+    }
 }
 
 #[allow(clippy::too_many_arguments)]
@@ -1873,8 +1932,8 @@ mod tests {
             100,
             Some("200".into()),
             &[ev],
-            &[supply],
-            &[qa],
+            std::slice::from_ref(&supply),
+            std::slice::from_ref(&qa),
         )
         .unwrap();
         for f in [
@@ -1887,6 +1946,30 @@ mod tests {
         ] {
             assert!(out.join(f).is_file(), "missing {f}");
         }
+        assert!(
+            !out.join("artifact_manifest.json").exists(),
+            "manifest is written only after a successful run, not in write_run_artifacts"
+        );
+        let provenance = ProvenanceBlock {
+            from_block: 100,
+            to_block_requested: Some("200".into()),
+            generated_at: "2026-01-01T00:00:00Z".into(),
+            per_chain_spans: false,
+        };
+        crate::artifact::write_transfer_audit_manifest(
+            &out,
+            &transfer_audit_manifest_params(
+                "USDC",
+                "run_test",
+                "2026-01-01T00:00:00Z",
+                false,
+                &provenance,
+                std::slice::from_ref(&supply),
+                std::slice::from_ref(&qa),
+            ),
+        )
+        .unwrap();
+        assert!(out.join("artifact_manifest.json").is_file());
         let _ = std::fs::remove_dir_all(&out);
     }
 
@@ -2069,6 +2152,10 @@ mod tests {
         assert!(out.join("qa_report.json").is_file());
         assert!(out.join("supply_audit.csv").is_file());
         assert!(out.join("summary.md").is_file());
+        assert!(
+            out.join("artifact_manifest.json").is_file(),
+            "successful run must write product manifest for API discovery"
+        );
         let _ = std::fs::remove_dir_all(&out);
     }
 
@@ -2104,5 +2191,136 @@ mod tests {
             std::env::remove_var(key);
         }
         let _ = std::fs::remove_dir_all(&out);
+    }
+
+    /// End-to-end: successful `transfer-audit` → `artifact_manifest.json` → read-only API discovery.
+    #[cfg(feature = "api")]
+    #[tokio::test]
+    async fn e2e_transfer_audit_success_discovered_by_api() {
+        use std::collections::HashSet;
+
+        use axum::body::Body;
+        use axum::http::{Request, StatusCode};
+        use tower::ServiceExt;
+
+        use crate::api::{router, ArtifactStore};
+        use crate::report::ensure_run_out_dir;
+
+        let run_id = format!("e2e_api_success_{}", std::process::id());
+        let partial_id = format!("e2e_api_partial_{}", std::process::id());
+        let success_dir = ensure_run_out_dir("USDC", &run_id).unwrap();
+        let _ = std::fs::remove_dir_all(&success_dir);
+
+        let specs = vec![
+            ChainSpecRecord {
+                chain: "ethereum".into(),
+                from_block: 100,
+                to_block_requested: "200".into(),
+            },
+            ChainSpecRecord {
+                chain: "base".into(),
+                from_block: 300,
+                to_block_requested: "400".into(),
+            },
+        ];
+        let mut ckpt = CheckpointManifest::new(
+            "USDC",
+            &run_id,
+            "2026-05-15T08:00:00+00:00",
+            500,
+            true,
+            specs,
+        );
+        for (chain, from, to, chain_id) in [("ethereum", 100u64, 200, 1), ("base", 300, 400, 8453)]
+        {
+            let supply = SupplyAuditRow {
+                chain: chain.into(),
+                chain_id,
+                contract_address: format!("0x{chain}"),
+                from_block: from,
+                resolved_to_block: Some(to),
+                to_block_requested: to.to_string(),
+                chunk_size: 500,
+                transfer_event_count: 0,
+                active_senders: 0,
+                active_recipients: 0,
+                mint_count: 0,
+                burn_count: 0,
+                plain_transfer_count: 0,
+                sum_mints_raw: "0".into(),
+                sum_burns_raw: "0".into(),
+                net_mint_raw: Some("0".into()),
+                total_supply_at_start_minus_1: Some("1.000000".into()),
+                total_supply_at_start_minus_1_provenance: "on-chain".into(),
+                total_supply_at_end: Some("1.000000".into()),
+                onchain_delta_raw: Some("0".into()),
+                discrepancy_raw: Some("0".into()),
+                metadata_call_pass: true,
+                historical_supply_pass: true,
+                no_duplicate_logs_pass: Some(true),
+                transfer_decode_pass: Some(true),
+                supply_invariant_pass: Some(true),
+                duplicate_count: 0,
+                full_decode_error_count: 0,
+                window_start_block_timestamp_rfc3339: None,
+                window_end_block_timestamp_rfc3339: None,
+            };
+            let qa = build_qa_chain(&supply, "2026-05-15T08:00:00+00:00", &[]);
+            let bundle = CheckpointChainBundle { supply, qa };
+            transfer_checkpoint::save_completed_chain(&success_dir, &mut ckpt, chain, &[], &bundle)
+                .unwrap();
+        }
+
+        run_per_chain_windows(
+            "USDC",
+            vec![("ethereum".into(), 100, 200), ("base".into(), 300, 400)],
+            None,
+            Some(run_id.clone()),
+            false,
+        )
+        .await
+        .unwrap();
+
+        assert!(
+            success_dir.join("artifact_manifest.json").is_file(),
+            "successful transfer-audit must write artifact_manifest.json"
+        );
+
+        let partial_dir = ensure_run_out_dir("USDC", &partial_id).unwrap();
+        let _ = std::fs::remove_dir_all(&partial_dir);
+        std::fs::create_dir_all(&partial_dir).unwrap();
+        std::fs::write(partial_dir.join("qa_report.json"), r#"{"asset":"USDC"}"#).unwrap();
+        std::fs::write(partial_dir.join("supply_audit.csv"), "chain\n").unwrap();
+        assert!(!partial_dir.join("artifact_manifest.json").exists());
+
+        let store = ArtifactStore::open("out").unwrap();
+        let runs = store.list_runs().unwrap();
+        let listed: HashSet<String> = runs.into_iter().map(|r| r.run_id).collect();
+        assert!(
+            listed.contains(&run_id),
+            "GET /api/runs must list successful manifest-backed run"
+        );
+        assert!(
+            !listed.contains(&partial_id),
+            "partial run without artifact_manifest.json must not be listed"
+        );
+
+        let app = router(store);
+        let manifest_uri = format!("/api/runs/{run_id}/manifest?asset=USDC");
+        let response = app
+            .oneshot(Request::get(&manifest_uri).body(Body::empty()).unwrap())
+            .await
+            .unwrap();
+        assert_eq!(response.status(), StatusCode::OK);
+        let body = axum::body::to_bytes(response.into_body(), usize::MAX)
+            .await
+            .unwrap();
+        let manifest: crate::artifact::ArtifactManifest = serde_json::from_slice(&body).unwrap();
+        assert_eq!(manifest.command, "transfer-audit");
+        assert_eq!(manifest.asset.as_deref(), Some("USDC"));
+        assert_eq!(manifest.run_id.as_deref(), Some(run_id.as_str()));
+
+        let _ = std::fs::remove_dir_all(&success_dir);
+        let _ = std::fs::remove_dir_all(&partial_dir);
     }
 }

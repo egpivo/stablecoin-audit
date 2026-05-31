@@ -123,6 +123,7 @@ cargo run -- cross-chain-summary --asset USDC --run-id refactor_smoke
 
 ## v0.3 follow-on
 
-- Emit `artifact_manifest.json` from `transfer-audit` / `cross-chain-summary`
+- ~~Emit `artifact_manifest.json` from `transfer-audit`~~ (shipped)
+- Emit / update manifest from `cross-chain-summary`
 - Legacy run discovery without product manifest
 - Package endpoints (`GET /api/packages/...`)

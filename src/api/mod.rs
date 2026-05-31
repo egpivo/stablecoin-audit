@@ -31,36 +31,60 @@ pub async fn serve(artifact_root: impl AsRef<Path>, host: &str, port: u16) -> an
 mod tests {
     use super::*;
     use crate::artifact::{
-        write_artifact_manifest, ArtifactFormat, ArtifactKind, ArtifactManifest, ArtifactRef,
+        transfer_audit_manifest::{ManifestChainInput, TransferAuditManifestParams},
+        write_transfer_audit_manifest,
     };
     use axum::body::Body;
     use axum::http::{Request, StatusCode};
     use tower::ServiceExt;
 
-    fn sample_manifest(run_id: &str) -> ArtifactManifest {
-        ArtifactManifest {
-            run_id: Some(run_id.to_string()),
-            asset: Some("USDC".into()),
-            artifacts: vec![ArtifactRef {
-                kind: ArtifactKind::QaReport,
-                path: "qa_report.json".into(),
-                format: ArtifactFormat::Json,
-                row_count: None,
-                checksum_sha256: None,
-                description: "QA".into(),
-            }],
-            ..ArtifactManifest::new("transfer-audit", "0.1.0")
-        }
+    fn seed_transfer_audit_run(root: &std::path::Path, run_id: &str) {
+        let run_dir = root.join(format!("usdc/runs/{run_id}"));
+        std::fs::create_dir_all(&run_dir).unwrap();
+        std::fs::write(run_dir.join("qa_report.json"), r#"{"asset":"USDC"}"#).unwrap();
+        std::fs::write(
+            run_dir.join("provenance.json"),
+            r#"{"schema":"transfer-audit-provenance-v1"}"#,
+        )
+        .unwrap();
+        std::fs::write(run_dir.join("supply_audit.md"), "# supply").unwrap();
+        std::fs::write(run_dir.join("summary.md"), "# summary").unwrap();
+        std::fs::write(run_dir.join("supply_audit.csv"), "chain\nethereum\n").unwrap();
+        std::fs::write(run_dir.join("decoded_transfers.csv"), "chain\n").unwrap();
+        write_transfer_audit_manifest(
+            &run_dir,
+            &TransferAuditManifestParams {
+                asset: "USDC".into(),
+                run_id: run_id.to_string(),
+                generated_at: "2026-05-15T08:03:31.695921+00:00".into(),
+                per_chain_spans: true,
+                provenance_from_block: 100,
+                provenance_to_block_requested: None,
+                chains: vec![ManifestChainInput {
+                    chain: "ethereum".into(),
+                    from_block: 100,
+                    to_block_requested: "200".into(),
+                    window_start_rfc3339: Some("2026-05-01T00:00:00Z".into()),
+                    window_end_rfc3339: Some("2026-05-08T00:00:00Z".into()),
+                    errors: vec![],
+                }],
+                warnings: vec![],
+            },
+        )
+        .unwrap();
     }
 
     fn test_store() -> ArtifactStore {
-        let root =
-            std::env::temp_dir().join(format!("stablecoin_api_store_{}", std::process::id()));
+        let root = std::env::temp_dir().join(format!(
+            "stablecoin_api_store_{}_{}",
+            std::process::id(),
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap()
+                .as_nanos()
+        ));
         let _ = std::fs::remove_dir_all(&root);
-        let run_dir = root.join("usdc/runs/test_run");
-        std::fs::create_dir_all(&run_dir).unwrap();
-        std::fs::write(run_dir.join("qa_report.json"), "{}").unwrap();
-        write_artifact_manifest(&run_dir, &sample_manifest("test_run")).unwrap();
+        seed_transfer_audit_run(&root, "test_run");
         ArtifactStore::open(&root).unwrap()
     }
 
@@ -98,6 +122,12 @@ mod tests {
             .await
             .unwrap();
         assert_eq!(response.status(), StatusCode::OK);
+        let body = axum::body::to_bytes(response.into_body(), usize::MAX)
+            .await
+            .unwrap();
+        let m: crate::artifact::ArtifactManifest = serde_json::from_slice(&body).unwrap();
+        assert_eq!(m.command, "transfer-audit");
+        assert_eq!(m.run_id.as_deref(), Some("test_run"));
     }
 
     #[tokio::test]
