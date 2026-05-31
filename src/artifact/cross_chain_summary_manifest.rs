@@ -58,6 +58,7 @@ pub fn upsert_cross_chain_summary_manifest(
     upsert_workflow_step(&mut manifest.workflow_steps, step);
 
     merge_cross_chain_claims(&mut manifest.supported_claims);
+    merge_cross_chain_unsupported_claims(&mut manifest.unsupported_claims);
     merge_top_level_warnings(&mut manifest.warnings, &params.warnings);
     manifest.generated_at = completed_at;
 
@@ -120,11 +121,19 @@ fn upsert_workflow_step(steps: &mut Vec<WorkflowStep>, step: WorkflowStep) {
 }
 
 fn merge_cross_chain_claims(supported: &mut Vec<ClaimBoundary>) {
-    let new_claims = cross_chain_supported_claims();
-    let existing: HashSet<String> = supported.iter().map(|c| c.claim.clone()).collect();
-    for claim in new_claims {
-        if !existing.contains(&claim.claim) {
-            supported.push(claim);
+    upsert_claims(supported, cross_chain_supported_claims());
+}
+
+fn merge_cross_chain_unsupported_claims(unsupported: &mut Vec<ClaimBoundary>) {
+    upsert_claims(unsupported, cross_chain_unsupported_claims());
+}
+
+fn upsert_claims(target: &mut Vec<ClaimBoundary>, updates: Vec<ClaimBoundary>) {
+    for claim in updates {
+        if let Some(i) = target.iter().position(|c| c.claim == claim.claim) {
+            target[i] = claim;
+        } else {
+            target.push(claim);
         }
     }
 }
@@ -140,22 +149,43 @@ fn merge_top_level_warnings(warnings: &mut Vec<String>, step_warnings: &[String]
 
 fn cross_chain_supported_claims() -> Vec<ClaimBoundary> {
     vec![
-        ClaimBoundary {
-            claim: "cross_chain_per_deployment_comparison".into(),
-            status: ClaimStatus::Conditional,
-            evidence_artifacts: vec![
+        ClaimBoundary::new(
+            "cross_chain_per_deployment_comparison",
+            ClaimStatus::Conditional,
+            "Per-deployment transfer-audit metrics are rolled up for cross-chain comparison on one asset schema.",
+            vec![
                 "cross_chain_summary.json".into(),
                 "supply_audit.csv".into(),
             ],
-            caveat: "Compares per-chain deployments on one schema; bridged inventory double-counts if summed as circulating supply.".into(),
-        },
-        ClaimBoundary {
-            claim: "cross_chain_delta_sum_reported".into(),
-            status: ClaimStatus::Conditional,
-            evidence_artifacts: vec!["cross_chain_summary.json".into()],
-            caveat: "Signed delta sum is an arithmetic aggregate of per-chain windows; not bridge netting.".into(),
-        },
+            vec![
+                "Compares per-chain deployments on one schema; bridged inventory double-counts if summed as circulating supply.".into(),
+            ],
+            vec![],
+        ),
+        ClaimBoundary::new(
+            "per_chain_totalSupply_not_circulating_supply",
+            ClaimStatus::Conditional,
+            "Per-chain totalSupply(end) values are reported separately and must not be read as consolidated circulating supply.",
+            vec!["cross_chain_summary.json".into(), "supply_audit.csv".into()],
+            vec![
+                "Summing per-chain totalSupply(end) double-counts bridged or custodied inventory.".into(),
+            ],
+            vec![],
+        ),
     ]
+}
+
+fn cross_chain_unsupported_claims() -> Vec<ClaimBoundary> {
+    vec![ClaimBoundary::new(
+        "bridge_backing_not_verified_without_bridge_collateral",
+        ClaimStatus::Unsupported,
+        "Bridge collateral, mint authority, and reserve backing are not verified without bridge-specific collateral evidence.",
+        vec![],
+        vec![
+            "Cross-chain summary compares on-chain totals only; bridge attestations and reserve data are out of scope.".into(),
+        ],
+        vec![],
+    )]
 }
 
 #[cfg(test)]
@@ -229,6 +259,48 @@ mod tests {
             let expected = crate::artifact::sha256_file_hex(&out.join(&artifact.path)).unwrap();
             assert_eq!(artifact.checksum_sha256.as_deref(), Some(expected.as_str()));
         }
+        let _ = std::fs::remove_dir_all(&out);
+    }
+
+    #[test]
+    fn upsert_formal_claims_idempotently() {
+        let out = std::env::temp_dir().join(format!("stablecoin_cc_claims_{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&out);
+        std::fs::create_dir_all(&out).unwrap();
+        seed_transfer_audit_manifest(&out).unwrap();
+        std::fs::write(out.join("cross_chain_summary.json"), "{}").unwrap();
+        std::fs::write(out.join("cross_chain_summary.md"), "#").unwrap();
+
+        let params = CrossChainSummaryManifestParams {
+            completed_at: "2026-05-16T09:00:00+00:00".into(),
+            warnings: vec![],
+        };
+        upsert_cross_chain_summary_manifest(&out, &params).unwrap();
+        let m1 = load_artifact_manifest(&out).unwrap();
+        let claim = m1
+            .supported_claims
+            .iter()
+            .find(|c| c.claim == "cross_chain_per_deployment_comparison")
+            .unwrap();
+        assert!(!claim.statement.is_empty());
+        assert!(!claim.limitations.is_empty());
+        assert!(m1
+            .unsupported_claims
+            .iter()
+            .any(|c| c.claim == "bridge_backing_not_verified_without_bridge_collateral"));
+
+        upsert_cross_chain_summary_manifest(&out, &params).unwrap();
+        let m2 = load_artifact_manifest(&out).unwrap();
+        assert_eq!(
+            m2.supported_claims
+                .iter()
+                .filter(|c| {
+                    c.claim == "cross_chain_per_deployment_comparison"
+                        || c.claim == "per_chain_totalSupply_not_circulating_supply"
+                })
+                .count(),
+            2
+        );
         let _ = std::fs::remove_dir_all(&out);
     }
 

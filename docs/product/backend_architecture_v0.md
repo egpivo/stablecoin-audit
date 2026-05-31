@@ -19,6 +19,17 @@ Answers live in **artifacts + manifests**, not in a hosted dashboard’s busines
 
 ## Architecture layers
 
+The toolkit stacks five conceptual layers (see [`audit_semantics_v0.md`](audit_semantics_v0.md) for claim and audit-plan detail):
+
+```text
+Product (API, package, UI) → Artifact (manifest, files) → Claim (supported_claims)
+  → Audit engine (CLI workflows) → Evidence (CSV/JSON/MD from RPC)
+```
+
+`artifact_manifest.json` is the **product run contract** — not the audit itself. It indexes artifacts and records claim boundaries; `supported_claims` / `unsupported_claims` are the semantic audit output.
+
+## Architecture layers (implementation)
+
 ```text
 ┌─────────────────────────────────────────────────────────────┐
 │  Frontend evidence browser (v0.5, future)                    │
@@ -100,6 +111,7 @@ out/
     runs/
       <run_id>/
         artifact_manifest.json   # v0.2+ product manifest (alongside legacy files)
+        audit_plan.json          # v0 audit scope and requested checks
         provenance.json
         qa_report.json
         supply_audit.csv

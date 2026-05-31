@@ -12,6 +12,7 @@ use std::collections::HashSet;
 use std::str::FromStr;
 
 use crate::artifact::{
+    ensure_audit_plan,
     transfer_audit_manifest::{ManifestChainInput, TransferAuditManifestParams},
     write_transfer_audit_manifest,
 };
@@ -523,6 +524,17 @@ async fn run_inner(
     pairs.sort_by(|a, b| a.0.chain.cmp(&b.0.chain));
     let (supply_rows, qa_chains): (Vec<_>, Vec<_>) = pairs.into_iter().unzip();
 
+    let manifest_params = transfer_audit_manifest_params(
+        asset,
+        &run_id,
+        &generated_at,
+        plan.per_chain_spans,
+        &provenance,
+        &supply_rows,
+        &qa_chains,
+    );
+    ensure_audit_plan(&out_dir, &manifest_params)?;
+
     write_run_artifacts(
         &out_dir,
         asset,
@@ -542,7 +554,7 @@ async fn run_inner(
         out_dir.display()
     );
     println!(
-        "  decoded_transfers.csv, supply_audit.csv, supply_audit.md, qa_report.json,\n  provenance.json, summary.md"
+        "  decoded_transfers.csv, supply_audit.csv, supply_audit.md, qa_report.json,\n  provenance.json, summary.md, audit_plan.json"
     );
 
     if any_hard_error {
@@ -559,18 +571,7 @@ async fn run_inner(
     transfer_checkpoint::remove_checkpoint_dir(&out_dir)?;
     println!("Checkpoint cleared.");
 
-    write_transfer_audit_manifest(
-        &out_dir,
-        &transfer_audit_manifest_params(
-            asset,
-            &run_id,
-            &generated_at,
-            plan.per_chain_spans,
-            &provenance,
-            &supply_rows,
-            &qa_chains,
-        ),
-    )?;
+    write_transfer_audit_manifest(&out_dir, &manifest_params)?;
 
     println!("  artifact_manifest.json (run complete — discoverable via API)");
     println!(
@@ -923,6 +924,7 @@ fn transfer_audit_manifest_params(
             }
             ManifestChainInput {
                 chain: row.chain.clone(),
+                contract_address: row.contract_address.clone(),
                 from_block: row.from_block,
                 to_block_requested: row.to_block_requested.clone(),
                 window_start_rfc3339: row.window_start_block_timestamp_rfc3339.clone(),

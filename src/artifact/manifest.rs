@@ -78,6 +78,7 @@ pub enum ArtifactKind {
     TransferLog,
     Summary,
     CrossChainSummary,
+    AuditPlan,
     Checkpoint,
     Metadata,
     MapPackage,
@@ -106,8 +107,40 @@ pub struct SourceSnapshot {
 pub struct ClaimBoundary {
     pub claim: String,
     pub status: ClaimStatus,
+    #[serde(default)]
+    pub statement: String,
     pub evidence_artifacts: Vec<String>,
+    #[serde(default)]
+    pub limitations: Vec<String>,
+    #[serde(default)]
+    pub warnings: Vec<String>,
+    /// Legacy field; prefer `limitations` for new claims.
+    #[serde(default)]
     pub caveat: String,
+}
+
+/// Formal audit claim emitted into `supported_claims` / `unsupported_claims`.
+pub type Claim = ClaimBoundary;
+
+impl ClaimBoundary {
+    pub fn new(
+        claim: impl Into<String>,
+        status: ClaimStatus,
+        statement: impl Into<String>,
+        evidence_artifacts: Vec<String>,
+        limitations: Vec<String>,
+        warnings: Vec<String>,
+    ) -> Self {
+        Self {
+            claim: claim.into(),
+            status,
+            statement: statement.into(),
+            evidence_artifacts,
+            limitations,
+            warnings,
+            caveat: String::new(),
+        }
+    }
 }
 
 #[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
@@ -175,19 +208,23 @@ mod tests {
 
     #[test]
     fn claim_boundary_roundtrip() {
-        let claim = ClaimBoundary {
-            claim: "supply_invariant_per_chain".into(),
-            status: ClaimStatus::Conditional,
-            evidence_artifacts: vec!["supply_audit.csv".into()],
-            caveat: "FAIL is not proof of fraud.".into(),
-        };
+        let claim = ClaimBoundary::new(
+            "supply_invariant_per_chain",
+            ClaimStatus::Conditional,
+            "Mint/burn aggregate compared to pinned totalSupply per chain.",
+            vec!["supply_audit.csv".into()],
+            vec!["FAIL is not proof of fraud.".into()],
+            vec![],
+        );
         let manifest = ArtifactManifest {
-            unsupported_claims: vec![ClaimBoundary {
-                claim: "reserve_backing".into(),
-                status: ClaimStatus::Unsupported,
-                evidence_artifacts: vec![],
-                caveat: "Out of scope.".into(),
-            }],
+            unsupported_claims: vec![ClaimBoundary::new(
+                "reserve_backing",
+                ClaimStatus::Unsupported,
+                "Reserve backing is not attested by this toolkit.",
+                vec![],
+                vec!["Out of scope.".into()],
+                vec![],
+            )],
             supported_claims: vec![claim.clone()],
             ..ArtifactManifest::new("transfer-audit", "0.1.0")
         };

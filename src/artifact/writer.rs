@@ -326,12 +326,14 @@ mod tests {
                 checksum_sha256: None,
                 description: "test".into(),
             }],
-            supported_claims: vec![ClaimBoundary {
-                claim: "supply_invariant".into(),
-                status: ClaimStatus::Conditional,
-                evidence_artifacts: vec!["qa_report.json".into()],
-                caveat: "test".into(),
-            }],
+            supported_claims: vec![ClaimBoundary::new(
+                "supply_invariant",
+                ClaimStatus::Conditional,
+                "Supply invariant evaluated.",
+                vec!["qa_report.json".into()],
+                vec!["test".into()],
+                vec![],
+            )],
             ..ArtifactManifest::new("transfer-audit", "0.1.0")
         };
         assert!(write_artifact_manifest(&dir, &manifest).is_err());
@@ -357,12 +359,14 @@ mod tests {
                 checksum_sha256: None,
                 description: "test".into(),
             }],
-            supported_claims: vec![ClaimBoundary {
-                claim: "gates".into(),
-                status: ClaimStatus::Conditional,
-                evidence_artifacts: vec!["qa_report.json".into()],
-                caveat: "test".into(),
-            }],
+            supported_claims: vec![ClaimBoundary::new(
+                "gates",
+                ClaimStatus::Conditional,
+                "QA gates evaluated.",
+                vec!["qa_report.json".into()],
+                vec!["test".into()],
+                vec![],
+            )],
             ..ArtifactManifest::new("transfer-audit", "0.1.0")
         };
         write_artifact_manifest(&dir, &manifest).unwrap();

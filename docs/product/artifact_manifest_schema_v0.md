@@ -80,6 +80,7 @@ Writers validate `workflow_steps[].artifacts` the same way as `ClaimBoundary.evi
 | `transfer_log` | `decoded_transfers.csv` |
 | `summary` | `summary.md` |
 | `cross_chain_summary` | `cross_chain_summary.json`, `.md` |
+| `audit_plan` | `audit_plan.json` |
 | `checkpoint` | `checkpoint/manifest.json` (resume only) |
 | `metadata` | `metadata.json` |
 | `map_package` | stablecoin-map CSV outputs |
@@ -105,10 +106,15 @@ Populate from existing `provenance.json` chain rows where possible.
 
 | Field | Type | Meaning |
 |-------|------|---------|
-| `claim` | string | Short claim id or sentence |
+| `claim` | string | Stable claim id |
 | `status` | `ClaimStatus` | `supported`, `unsupported`, `conditional` |
+| `statement` | string | Human-readable attestation or boundary |
 | `evidence_artifacts` | string[] | Paths (relative) backing the claim |
-| `caveat` | string | Limits, definitions, or failure interpretation |
+| `limitations` | string[] | Scope limits, definitions, failure interpretation |
+| `warnings` | string[] | Claim-local caveats (empty array if none) |
+| `caveat` | string | Legacy field; prefer `limitations` for new claims |
+
+See [`audit_semantics_v0.md`](audit_semantics_v0.md) for v0 claim ids and audit plan schema.
 
 ### `ClaimStatus`
 

@@ -433,6 +433,7 @@ mod tests {
             provenance_to_block_requested: None,
             chains: vec![ManifestChainInput {
                 chain: "ethereum".into(),
+                contract_address: "0xabc".into(),
                 from_block: 100,
                 to_block_requested: "200".into(),
                 window_start_rfc3339: Some("2026-05-01T00:00:00Z".into()),
