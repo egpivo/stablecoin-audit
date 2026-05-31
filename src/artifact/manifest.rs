@@ -18,6 +18,18 @@ pub struct ArtifactManifest {
     pub supported_claims: Vec<ClaimBoundary>,
     pub unsupported_claims: Vec<ClaimBoundary>,
     pub warnings: Vec<String>,
+    #[serde(default)]
+    pub workflow_steps: Vec<WorkflowStep>,
+}
+
+/// One completed toolkit command contributing to a run's evidence package.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct WorkflowStep {
+    pub command: String,
+    pub completed_at: DateTime<Utc>,
+    /// Relative artifact paths produced by this step.
+    pub artifacts: Vec<String>,
+    pub warnings: Vec<String>,
 }
 
 impl ArtifactManifest {
@@ -36,6 +48,7 @@ impl ArtifactManifest {
             supported_claims: Vec::new(),
             unsupported_claims: Vec::new(),
             warnings: Vec::new(),
+            workflow_steps: Vec::new(),
         }
     }
 }

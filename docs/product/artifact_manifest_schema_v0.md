@@ -30,6 +30,20 @@ One machine-readable index per toolkit run (or evidence package) so that:
 | `supported_claims` | array of `ClaimBoundary` | yes | Claims the toolkit supports with listed evidence |
 | `unsupported_claims` | array of `ClaimBoundary` | yes | Explicit non-claims (boundary documentation) |
 | `warnings` | array of string | yes | Non-fatal issues (empty array if none) |
+| `workflow_steps` | array of `WorkflowStep` | yes | Completed toolkit commands for this run (empty array if none) |
+
+Top-level `command` is the **primary** workflow that created the run (typically `transfer-audit`). Later commands such as `cross-chain-summary` are recorded only in `workflow_steps`; they do not replace `command`.
+
+## `WorkflowStep`
+
+| Field | Type | Meaning |
+|-------|------|---------|
+| `command` | string | CLI subcommand that completed (e.g. `transfer-audit`, `cross-chain-summary`) |
+| `completed_at` | string (RFC 3339 UTC) | When that step finished |
+| `artifacts` | string[] | Relative paths **produced by this step**; each path must also appear in `artifacts` |
+| `warnings` | array of string | Step-local warnings (empty array if none) |
+
+Writers validate `workflow_steps[].artifacts` the same way as `ClaimBoundary.evidence_artifacts`: paths must be listed in `artifacts`, pass relative-path rules, and exist on disk when the manifest is written.
 
 ## `InputRef`
 
@@ -167,7 +181,21 @@ Populate from existing `provenance.json` chain rows where possible.
       "caveat": "No DEX or oracle price series in transfer-audit alone."
     }
   ],
-  "warnings": []
+  "warnings": [],
+  "workflow_steps": [
+    {
+      "command": "transfer-audit",
+      "completed_at": "2026-05-15T08:03:31.695921+00:00",
+      "artifacts": ["provenance.json", "qa_report.json", "supply_audit.csv"],
+      "warnings": []
+    },
+    {
+      "command": "cross-chain-summary",
+      "completed_at": "2026-05-16T10:00:00+00:00",
+      "artifacts": ["cross_chain_summary.json", "cross_chain_summary.md"],
+      "warnings": ["Per-chain totalSupply(end) sums are not circulating supply across chains."]
+    }
+  ]
 }
 ```
 

@@ -7,6 +7,14 @@ use super::manifest::{ArtifactManifest, ClaimBoundary, SCHEMA};
 
 pub const MANIFEST_FILENAME: &str = "artifact_manifest.json";
 
+/// Read `artifact_manifest.json` from `out_dir`.
+pub fn load_artifact_manifest(out_dir: &Path) -> Result<ArtifactManifest> {
+    let path = out_dir.join(MANIFEST_FILENAME);
+    let text =
+        std::fs::read_to_string(&path).with_context(|| format!("read {}", path.display()))?;
+    serde_json::from_str(&text).with_context(|| format!("parse {}", path.display()))
+}
+
 /// Write `artifact_manifest.json` into `out_dir` (run or package directory).
 pub fn write_manifest(path: impl AsRef<Path>, manifest: &ArtifactManifest) -> Result<()> {
     write_artifact_manifest(path.as_ref(), manifest)
@@ -59,6 +67,32 @@ pub fn validate_manifest_paths(
             resolve_artifact_under_root(manifest_dir, evidence, require_existing_files)
                 .with_context(|| format!("claim {:?} evidence path {:?}", claim.claim, evidence))?;
         }
+    }
+
+    for step in &manifest.workflow_steps {
+        validate_workflow_step_artifacts(step, &declared, manifest_dir, require_existing_files)?;
+    }
+    Ok(())
+}
+
+fn validate_workflow_step_artifacts(
+    step: &super::manifest::WorkflowStep,
+    declared: &HashSet<&str>,
+    manifest_dir: &Path,
+    require_existing_files: bool,
+) -> Result<()> {
+    for path in &step.artifacts {
+        if !declared.contains(path.as_str()) {
+            anyhow::bail!(
+                "workflow step {:?} references artifact path {:?} which is not listed in manifest.artifacts",
+                step.command,
+                path
+            );
+        }
+        validate_relative_artifact_path(path)?;
+        resolve_artifact_under_root(manifest_dir, path, require_existing_files).with_context(
+            || format!("workflow step {:?} artifact path {:?}", step.command, path),
+        )?;
     }
     Ok(())
 }
@@ -193,7 +227,9 @@ mod tests {
     use super::*;
     use crate::artifact::manifest::{
         ArtifactFormat, ArtifactKind, ArtifactManifest, ArtifactRef, ClaimBoundary, ClaimStatus,
+        WorkflowStep,
     };
+    use chrono::Utc;
     use std::io::Write;
 
     #[test]
@@ -318,6 +354,37 @@ mod tests {
             ..ArtifactManifest::new("transfer-audit", "0.1.0")
         };
         write_artifact_manifest(&dir, &manifest).unwrap();
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn rejects_workflow_step_path_not_in_artifacts_list() {
+        let dir = std::env::temp_dir().join(format!(
+            "stablecoin_audit_manifest_workflow_{}",
+            std::process::id()
+        ));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).unwrap();
+        std::fs::write(dir.join("supply_audit.csv"), "chain\n").unwrap();
+
+        let manifest = ArtifactManifest {
+            artifacts: vec![ArtifactRef {
+                kind: ArtifactKind::SupplyAudit,
+                path: "supply_audit.csv".into(),
+                format: ArtifactFormat::Csv,
+                row_count: None,
+                checksum_sha256: None,
+                description: "test".into(),
+            }],
+            workflow_steps: vec![WorkflowStep {
+                command: "cross-chain-summary".into(),
+                completed_at: Utc::now(),
+                artifacts: vec!["cross_chain_summary.json".into()],
+                warnings: vec![],
+            }],
+            ..ArtifactManifest::new("transfer-audit", "0.1.0")
+        };
+        assert!(write_artifact_manifest(&dir, &manifest).is_err());
         let _ = std::fs::remove_dir_all(&dir);
     }
 }

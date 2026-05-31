@@ -9,7 +9,7 @@ use chrono::{DateTime, Utc};
 
 use super::manifest::{
     ArtifactFormat, ArtifactKind, ArtifactManifest, ArtifactRef, ClaimBoundary, ClaimStatus,
-    InputRef, SourceSnapshot, SCHEMA,
+    InputRef, SourceSnapshot, WorkflowStep, SCHEMA,
 };
 use super::writer::write_manifest;
 
@@ -92,6 +92,13 @@ pub fn build_transfer_audit_manifest(
 
     let supported_claims = transfer_audit_supported_claims();
     let unsupported_claims = transfer_audit_unsupported_claims();
+    let step_artifacts: Vec<String> = artifacts.iter().map(|a| a.path.clone()).collect();
+    let workflow_steps = vec![WorkflowStep {
+        command: COMMAND.to_string(),
+        completed_at: generated_at,
+        artifacts: step_artifacts,
+        warnings: params.warnings.clone(),
+    }];
 
     Ok(ArtifactManifest {
         schema: SCHEMA.to_string(),
@@ -107,6 +114,7 @@ pub fn build_transfer_audit_manifest(
         supported_claims,
         unsupported_claims,
         warnings: params.warnings.clone(),
+        workflow_steps,
     })
 }
 
@@ -187,7 +195,7 @@ fn collect_artifacts(out_dir: &Path) -> Result<Vec<ArtifactRef>> {
     Ok(artifacts)
 }
 
-fn csv_row_count_if_applicable(path: &Path, format: ArtifactFormat) -> Option<u64> {
+pub(crate) fn csv_row_count_if_applicable(path: &Path, format: ArtifactFormat) -> Option<u64> {
     if format != ArtifactFormat::Csv {
         return None;
     }

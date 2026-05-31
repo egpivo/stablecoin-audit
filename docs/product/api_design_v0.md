@@ -31,7 +31,11 @@ The server treats `--artifact-root` as a jail. Discovery (v0.3 skeleton):
 |---------|----------------|
 | `{root}/{asset}/runs/{run_id}/artifact_manifest.json` | Primary run manifest |
 
-`transfer-audit` writes `artifact_manifest.json` only after a **successful** run: all chains complete without hard errors, then checkpoint removed, then manifest written. If checkpoint cleanup or manifest write fails, the command errors and the run is not API-listed. Partial failed runs keep CSV/JSON outputs and checkpoint but **no** product manifest. Legacy fallback (`qa_report.json` without product manifest) is documented for future listing; not implemented yet.
+`transfer-audit` writes `artifact_manifest.json` only after a **successful** run: all chains complete without hard errors, then checkpoint removed, then manifest written. If checkpoint cleanup or manifest write fails, the command errors and the run is not API-listed. Partial failed runs keep CSV/JSON outputs and checkpoint but **no** product manifest.
+
+`cross-chain-summary` **upserts** the existing manifest (required): adds `cross_chain_summary.json` / `.md`, appends a `workflow_steps` entry for `cross-chain-summary`, and preserves `command: transfer-audit` plus transfer-audit artifacts. Re-running cross-chain-summary is idempotent for artifact entries.
+
+Legacy fallback (`qa_report.json` without product manifest) is documented for future listing; not implemented yet.
 
 ## Endpoints (implemented)
 
