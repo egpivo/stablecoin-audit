@@ -1,7 +1,10 @@
+pub mod checksum;
 pub mod cross_chain_summary_manifest;
 pub mod manifest;
 pub mod transfer_audit_manifest;
 pub mod writer;
+
+pub use checksum::sha256_file_hex;
 
 pub use cross_chain_summary_manifest::{
     upsert_cross_chain_summary_manifest, CrossChainSummaryManifestParams,

@@ -115,7 +115,12 @@ mod tests {
 
     #[tokio::test]
     async fn returns_manifest_for_run() {
-        let app = router(test_store());
+        let store = test_store();
+        let expected = crate::artifact::sha256_file_hex(
+            &store.root().join("usdc/runs/test_run/qa_report.json"),
+        )
+        .unwrap();
+        let app = router(store);
         let uri = "/api/runs/test_run/manifest?asset=USDC";
         let response = app
             .oneshot(Request::get(uri).body(Body::empty()).unwrap())
@@ -128,6 +133,42 @@ mod tests {
         let m: crate::artifact::ArtifactManifest = serde_json::from_slice(&body).unwrap();
         assert_eq!(m.command, "transfer-audit");
         assert_eq!(m.run_id.as_deref(), Some("test_run"));
+        let qa = m
+            .artifacts
+            .iter()
+            .find(|a| a.path == "qa_report.json")
+            .expect("qa_report.json in manifest");
+        assert_eq!(qa.checksum_sha256.as_deref(), Some(expected.as_str()));
+    }
+
+    #[tokio::test]
+    async fn run_artifacts_listing_includes_checksum() {
+        let store = test_store();
+        let expected = crate::artifact::sha256_file_hex(
+            &store.root().join("usdc/runs/test_run/qa_report.json"),
+        )
+        .unwrap();
+        let app = router(store);
+        let response = app
+            .oneshot(
+                Request::get("/api/runs/test_run/artifacts?asset=USDC")
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(response.status(), StatusCode::OK);
+        let body = axum::body::to_bytes(response.into_body(), usize::MAX)
+            .await
+            .unwrap();
+        let v: serde_json::Value = serde_json::from_slice(&body).unwrap();
+        let qa = v["artifacts"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .find(|a| a["path"].as_str().unwrap().ends_with("qa_report.json"))
+            .expect("qa_report in artifact list");
+        assert_eq!(qa["checksum_sha256"].as_str(), Some(expected.as_str()));
     }
 
     #[tokio::test]

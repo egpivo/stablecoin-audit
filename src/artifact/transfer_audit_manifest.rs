@@ -7,6 +7,7 @@ use std::path::Path;
 use anyhow::{Context, Result};
 use chrono::{DateTime, Utc};
 
+use super::checksum::sha256_file_hex;
 use super::manifest::{
     ArtifactFormat, ArtifactKind, ArtifactManifest, ArtifactRef, ClaimBoundary, ClaimStatus,
     InputRef, SourceSnapshot, WorkflowStep, SCHEMA,
@@ -187,7 +188,7 @@ fn collect_artifacts(out_dir: &Path) -> Result<Vec<ArtifactRef>> {
                 path: file.to_string(),
                 format: *format,
                 row_count: csv_row_count_if_applicable(&path, *format),
-                checksum_sha256: None,
+                checksum_sha256: Some(sha256_file_hex(&path)?),
                 description: (*description).to_string(),
             });
         }
@@ -338,6 +339,19 @@ mod tests {
         let (out, params) = minimal_out_dir("write");
         write_transfer_audit_manifest(&out, &params).unwrap();
         assert!(out.join(super::super::writer::MANIFEST_FILENAME).is_file());
+        let _ = std::fs::remove_dir_all(&out);
+    }
+
+    #[test]
+    fn artifact_checksums_match_file_contents() {
+        let (out, params) = minimal_out_dir("checksums");
+        let manifest = build_transfer_audit_manifest(&out, &params).unwrap();
+        for artifact in &manifest.artifacts {
+            let file = out.join(&artifact.path);
+            let expected = super::super::checksum::sha256_file_hex(&file).unwrap();
+            assert_eq!(artifact.checksum_sha256.as_deref(), Some(expected.as_str()));
+            assert_eq!(expected.len(), 64);
+        }
         let _ = std::fs::remove_dir_all(&out);
     }
 }

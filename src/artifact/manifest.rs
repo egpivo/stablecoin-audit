@@ -195,4 +195,32 @@ mod tests {
         let back: ArtifactManifest = serde_json::from_str(&json).unwrap();
         assert_eq!(back.supported_claims, vec![claim]);
     }
+
+    #[test]
+    fn legacy_manifest_without_checksum_deserializes() {
+        let json = r#"{
+          "schema": "artifact-manifest-v0",
+          "toolkit_version": "0.1.0",
+          "generated_at": "2026-05-15T08:00:00+00:00",
+          "command": "transfer-audit",
+          "run_id": "legacy_run",
+          "package_id": null,
+          "asset": "USDC",
+          "inputs": [],
+          "artifacts": [{
+            "kind": "qa_report",
+            "path": "qa_report.json",
+            "format": "json",
+            "row_count": null,
+            "description": "QA gates"
+          }],
+          "source_snapshots": [],
+          "supported_claims": [],
+          "unsupported_claims": [],
+          "warnings": []
+        }"#;
+        let m: ArtifactManifest = serde_json::from_str(json).unwrap();
+        assert_eq!(m.artifacts.len(), 1);
+        assert_eq!(m.artifacts[0].checksum_sha256, None);
+    }
 }

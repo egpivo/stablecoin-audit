@@ -6,6 +6,7 @@ use std::path::Path;
 use anyhow::{Context, Result};
 use chrono::{DateTime, Utc};
 
+use super::checksum::sha256_file_hex;
 use super::manifest::{
     ArtifactFormat, ArtifactKind, ArtifactRef, ClaimBoundary, ClaimStatus, WorkflowStep,
 };
@@ -92,7 +93,7 @@ fn collect_cross_chain_artifacts(out_dir: &Path) -> Result<Vec<ArtifactRef>> {
                 path: file.to_string(),
                 format: *format,
                 row_count: csv_row_count_if_applicable(&path, *format),
-                checksum_sha256: None,
+                checksum_sha256: Some(sha256_file_hex(&path)?),
                 description: (*description).to_string(),
             });
         }
@@ -220,6 +221,14 @@ mod tests {
             .iter()
             .any(|s| s.command == "transfer-audit"));
         assert!(m.workflow_steps.iter().any(|s| s.command == COMMAND));
+        for artifact in m
+            .artifacts
+            .iter()
+            .filter(|a| a.path.starts_with("cross_chain_summary"))
+        {
+            let expected = crate::artifact::sha256_file_hex(&out.join(&artifact.path)).unwrap();
+            assert_eq!(artifact.checksum_sha256.as_deref(), Some(expected.as_str()));
+        }
         let _ = std::fs::remove_dir_all(&out);
     }
 
@@ -249,6 +258,48 @@ mod tests {
                 .count(),
             2
         );
+        let _ = std::fs::remove_dir_all(&out);
+    }
+
+    #[test]
+    fn upsert_replaces_checksum_when_artifact_regenerated() {
+        let out = std::env::temp_dir().join(format!(
+            "stablecoin_cc_checksum_regen_{}",
+            std::process::id()
+        ));
+        let _ = std::fs::remove_dir_all(&out);
+        std::fs::create_dir_all(&out).unwrap();
+        seed_transfer_audit_manifest(&out).unwrap();
+        std::fs::write(out.join("cross_chain_summary.json"), r#"{"v":1}"#).unwrap();
+        std::fs::write(out.join("cross_chain_summary.md"), "# v1").unwrap();
+
+        let params = CrossChainSummaryManifestParams {
+            completed_at: "2026-05-16T09:00:00+00:00".into(),
+            warnings: vec![],
+        };
+        upsert_cross_chain_summary_manifest(&out, &params).unwrap();
+        let checksum_v1 = load_artifact_manifest(&out)
+            .unwrap()
+            .artifacts
+            .into_iter()
+            .find(|a| a.path == "cross_chain_summary.json")
+            .unwrap()
+            .checksum_sha256;
+
+        std::fs::write(out.join("cross_chain_summary.json"), r#"{"v":2}"#).unwrap();
+        upsert_cross_chain_summary_manifest(&out, &params).unwrap();
+        let checksum_v2 = load_artifact_manifest(&out)
+            .unwrap()
+            .artifacts
+            .into_iter()
+            .find(|a| a.path == "cross_chain_summary.json")
+            .unwrap()
+            .checksum_sha256;
+
+        assert_ne!(checksum_v1, checksum_v2);
+        let expected =
+            crate::artifact::sha256_file_hex(&out.join("cross_chain_summary.json")).unwrap();
+        assert_eq!(checksum_v2.as_deref(), Some(expected.as_str()));
         let _ = std::fs::remove_dir_all(&out);
     }
 

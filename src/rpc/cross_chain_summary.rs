@@ -716,6 +716,14 @@ mod tests {
         validate_provenance_window(&qa, &supply).unwrap();
     }
 
+    fn remove_run_path_if_present(path: &std::path::Path) {
+        if path.is_dir() {
+            let _ = std::fs::remove_dir_all(path);
+        } else if path.is_file() {
+            let _ = std::fs::remove_file(path);
+        }
+    }
+
     fn write_minimal_transfer_audit_manifest(out: &std::path::Path, run_id: &str) {
         use crate::artifact::{
             build_transfer_audit_manifest, write_manifest, TransferAuditManifestParams,
@@ -764,10 +772,20 @@ mod tests {
 
     #[test]
     fn run_upserts_artifact_manifest() {
-        let run_id = format!("cc_run_manifest_{}", std::process::id());
+        let run_id = format!(
+            "cc_run_manifest_{}_{}",
+            std::process::id(),
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap()
+                .as_nanos()
+        );
+        let run_path = std::path::Path::new("out")
+            .join("usdc")
+            .join("runs")
+            .join(&run_id);
+        remove_run_path_if_present(&run_path);
         let out = crate::report::ensure_run_out_dir("USDC", &run_id).unwrap();
-        let _ = std::fs::remove_dir_all(&out);
-        std::fs::create_dir_all(&out).unwrap();
         seed_transfer_audit_run(&out, &run_id);
         run("USDC", &run_id).unwrap();
         let m = crate::artifact::load_artifact_manifest(&out).unwrap();
@@ -809,10 +827,20 @@ mod tests {
         use crate::api::{router, ArtifactStore};
         use crate::report::ensure_run_out_dir;
 
-        let run_id = format!("cc_api_{}", std::process::id());
+        let run_id = format!(
+            "cc_api_{}_{}",
+            std::process::id(),
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap()
+                .as_nanos()
+        );
+        let run_path = std::path::Path::new("out")
+            .join("usdc")
+            .join("runs")
+            .join(&run_id);
+        remove_run_path_if_present(&run_path);
         let out = ensure_run_out_dir("USDC", &run_id).unwrap();
-        let _ = std::fs::remove_dir_all(&out);
-        std::fs::create_dir_all(&out).unwrap();
         seed_transfer_audit_run(&out, &run_id);
         run("USDC", &run_id).unwrap();
 
