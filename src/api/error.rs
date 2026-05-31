@@ -10,6 +10,7 @@ pub enum ErrorCode {
     NotFound,
     ManifestNotFound,
     AmbiguousRunId,
+    PackageNotFound,
     IoError,
 }
 
@@ -47,6 +48,14 @@ impl ApiError {
         Self {
             status: StatusCode::NOT_FOUND,
             code: ErrorCode::ManifestNotFound,
+            message: message.into(),
+        }
+    }
+
+    pub fn package_not_found(message: impl Into<String>) -> Self {
+        Self {
+            status: StatusCode::NOT_FOUND,
+            code: ErrorCode::PackageNotFound,
             message: message.into(),
         }
     }

@@ -7,7 +7,7 @@ use axum::routing::get;
 use axum::{Json, Router};
 use serde::Deserialize;
 
-use crate::artifact::ArtifactManifest;
+use crate::artifact::{ArtifactManifest, PackageManifest};
 
 use super::artifact_store::{ArtifactStore, RunArtifactsResponse, RunsResponse};
 use super::error::ApiError;
@@ -34,6 +34,10 @@ pub fn router(store: ArtifactStore) -> Router {
         .route("/api/runs", get(list_runs))
         .route("/api/runs/:run_id/manifest", get(get_manifest))
         .route("/api/runs/:run_id/artifacts", get(get_artifacts))
+        .route(
+            "/api/runs/:run_id/package",
+            get(get_package).post(create_package),
+        )
         .route("/api/artifacts/*artifact_path", get(serve_artifact))
         .with_state(state)
 }
@@ -72,6 +76,26 @@ async fn get_artifacts(
         asset,
         artifacts,
     }))
+}
+
+async fn create_package(
+    State(state): State<AppState>,
+    Path(run_id): Path<String>,
+    Query(query): Query<AssetQuery>,
+) -> Result<Json<PackageManifest>, ApiError> {
+    let package = state
+        .store
+        .generate_package(&run_id, query.asset.as_deref())?;
+    Ok(Json(package))
+}
+
+async fn get_package(
+    State(state): State<AppState>,
+    Path(run_id): Path<String>,
+    Query(query): Query<AssetQuery>,
+) -> Result<Json<PackageManifest>, ApiError> {
+    let package = state.store.load_package(&run_id, query.asset.as_deref())?;
+    Ok(Json(package))
 }
 
 async fn serve_artifact(

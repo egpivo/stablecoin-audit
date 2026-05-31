@@ -4,6 +4,13 @@ Schema id: `artifact-manifest-v0`
 
 File name: `artifact_manifest.json` (sibling to `provenance.json` inside a run directory or package directory).
 
+## Canonical product contract
+
+- **Single source of truth** for API run discovery, artifact listings, claim boundaries, workflow steps, and stablecoin-map package generation.
+- Writers (`transfer-audit`, `cross-chain-summary` upsert) populate this file; readers must not infer product artifacts by scanning the run directory.
+- **No valid manifest** means the run is incomplete or invalid for product surfaces: not listed by `GET /api/runs`, not packageable, and not a completed product run.
+- Legacy discovery (for example treating `qa_report.json` alone as a completed run) is intentionally unsupported.
+
 ## Purpose
 
 One machine-readable index per toolkit run (or evidence package) so that:

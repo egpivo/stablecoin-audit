@@ -12,7 +12,19 @@ pub fn load_artifact_manifest(out_dir: &Path) -> Result<ArtifactManifest> {
     let path = out_dir.join(MANIFEST_FILENAME);
     let text =
         std::fs::read_to_string(&path).with_context(|| format!("read {}", path.display()))?;
-    serde_json::from_str(&text).with_context(|| format!("parse {}", path.display()))
+    parse_artifact_manifest_json(&text).with_context(|| format!("parse {}", path.display()))
+}
+
+/// Parse and validate product manifest JSON (schema id, required fields via serde).
+pub fn parse_artifact_manifest_json(text: &str) -> Result<ArtifactManifest> {
+    let manifest: ArtifactManifest =
+        serde_json::from_str(text).context("deserialize artifact manifest JSON")?;
+    anyhow::ensure!(
+        manifest.schema == SCHEMA,
+        "manifest schema must be {SCHEMA}, got {:?}",
+        manifest.schema
+    );
+    Ok(manifest)
 }
 
 /// Write `artifact_manifest.json` into `out_dir` (run or package directory).
@@ -386,5 +398,25 @@ mod tests {
         };
         assert!(write_artifact_manifest(&dir, &manifest).is_err());
         let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn parse_rejects_wrong_schema() {
+        let json = r#"{
+          "schema": "wrong-schema",
+          "toolkit_version": "0.1.0",
+          "generated_at": "2026-05-15T08:00:00+00:00",
+          "command": "transfer-audit",
+          "run_id": null,
+          "package_id": null,
+          "asset": null,
+          "inputs": [],
+          "artifacts": [],
+          "source_snapshots": [],
+          "supported_claims": [],
+          "unsupported_claims": [],
+          "warnings": []
+        }"#;
+        assert!(parse_artifact_manifest_json(json).is_err());
     }
 }

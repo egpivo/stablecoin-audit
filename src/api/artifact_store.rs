@@ -3,7 +3,10 @@ use std::path::{Path, PathBuf};
 
 use serde::Serialize;
 
-use crate::artifact::{ArtifactManifest, ArtifactRef, MANIFEST_FILENAME};
+use crate::artifact::{
+    parse_artifact_manifest_json, ArtifactManifest, ArtifactRef, MANIFEST_FILENAME,
+    PACKAGE_MANIFEST_FILENAME,
+};
 use crate::domain::asset::validate_identifier;
 use crate::report::validate_run_id;
 
@@ -79,7 +82,9 @@ impl ArtifactStore {
                     run_id,
                     manifest_abs,
                 };
-                runs.push(self.descriptor_from_location(&loc)?);
+                if self.read_manifest_at(&loc.manifest_abs).is_ok() {
+                    runs.push(self.descriptor_from_location(&loc)?);
+                }
             }
         }
         runs.sort_by(|a, b| {
@@ -94,13 +99,7 @@ impl ArtifactStore {
         asset: Option<&str>,
     ) -> Result<ArtifactManifest, ApiError> {
         let loc = self.resolve_run(run_id, asset)?;
-        let text = fs::read_to_string(&loc.manifest_abs).map_err(|e| {
-            ApiError::manifest_not_found(format!(
-                "failed to read manifest for run_id {run_id}: {e}"
-            ))
-        })?;
-        serde_json::from_str(&text)
-            .map_err(|e| ApiError::io_error(format!("invalid manifest JSON: {e}")))
+        self.read_manifest_at(&loc.manifest_abs)
     }
 
     pub fn list_run_artifacts(
@@ -117,6 +116,46 @@ impl ArtifactStore {
             .map(|a| ArtifactRefResponse::from_manifest_ref(a, &prefix))
             .collect();
         Ok((loc.run_id, loc.asset_display, artifacts))
+    }
+
+    pub fn generate_package(
+        &self,
+        run_id: &str,
+        asset: Option<&str>,
+    ) -> Result<crate::artifact::PackageManifest, ApiError> {
+        let loc = self.resolve_run(run_id, asset)?;
+        let run_dir = loc
+            .manifest_abs
+            .parent()
+            .ok_or_else(|| ApiError::io_error("manifest path has no parent directory"))?;
+        let source_manifest_path = loc
+            .manifest_abs
+            .strip_prefix(&self.root)
+            .map_err(|_| ApiError::io_error("manifest path not under artifact root"))?
+            .to_string_lossy()
+            .replace('\\', "/");
+        crate::artifact::generate_stablecoin_map_package(run_dir, &source_manifest_path)
+            .map_err(map_package_error)
+    }
+
+    pub fn load_package(
+        &self,
+        run_id: &str,
+        asset: Option<&str>,
+    ) -> Result<crate::artifact::PackageManifest, ApiError> {
+        let loc = self.resolve_run(run_id, asset)?;
+        let run_dir = loc
+            .manifest_abs
+            .parent()
+            .ok_or_else(|| ApiError::io_error("manifest path has no parent directory"))?;
+        crate::artifact::load_package_manifest(run_dir).map_err(|e| {
+            let msg = e.to_string();
+            if msg.contains(PACKAGE_MANIFEST_FILENAME) {
+                ApiError::package_not_found(msg)
+            } else {
+                ApiError::io_error(msg)
+            }
+        })
     }
 
     fn resolve_run(&self, run_id: &str, asset: Option<&str>) -> Result<RunLocation, ApiError> {
@@ -187,21 +226,40 @@ impl ArtifactStore {
             .to_string_lossy()
             .replace('\\', "/");
 
-        let (command, generated_at) = match fs::read_to_string(&loc.manifest_abs) {
-            Ok(text) => match serde_json::from_str::<ArtifactManifest>(&text) {
-                Ok(m) => (Some(m.command), Some(m.generated_at.to_rfc3339())),
-                Err(_) => (None, None),
-            },
-            Err(_) => (None, None),
-        };
+        let manifest = self.read_manifest_at(&loc.manifest_abs)?;
 
         Ok(RunDescriptor {
             asset: loc.asset_display.clone(),
             run_id: loc.run_id.clone(),
-            command,
-            generated_at,
+            command: Some(manifest.command),
+            generated_at: Some(manifest.generated_at.to_rfc3339()),
             manifest_path,
         })
+    }
+
+    /// Read and validate `artifact_manifest.json` at an absolute path.
+    fn read_manifest_at(&self, manifest_abs: &Path) -> Result<ArtifactManifest, ApiError> {
+        let text = fs::read_to_string(manifest_abs).map_err(|e| {
+            ApiError::manifest_not_found(format!("failed to read {}: {e}", manifest_abs.display()))
+        })?;
+        parse_artifact_manifest_json(&text).map_err(|e| {
+            ApiError::io_error(format!(
+                "invalid {} at {}: {e}",
+                MANIFEST_FILENAME,
+                manifest_abs.display()
+            ))
+        })
+    }
+}
+
+fn map_package_error(err: anyhow::Error) -> ApiError {
+    let msg = err.to_string();
+    if msg.contains(MANIFEST_FILENAME) && (msg.contains("not found") || msg.contains("missing")) {
+        ApiError::manifest_not_found(msg)
+    } else if msg.contains("missing on disk") || msg.contains("manifest lists") {
+        ApiError::not_found(msg)
+    } else {
+        ApiError::io_error(msg)
     }
 }
 

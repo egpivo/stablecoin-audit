@@ -25,17 +25,25 @@ cargo run --features api -- serve \
 
 ## Filesystem model
 
-The server treats `--artifact-root` as a jail. Discovery (v0.3 skeleton):
+The server treats `--artifact-root` as a jail.
+
+### Canonical product contract
+
+`artifact_manifest.json` is the **single source of truth** for product runs:
+
+- Run discovery, artifact listings, claim boundaries, and package generation all read this file only.
+- A run directory may contain CSV/JSON outputs from a partial or legacy workflow; without a **valid** `artifact_manifest.json` it is **incomplete**, **not API-listed**, and **not packageable**.
+- Legacy directory discovery (for example inferring runs from `qa_report.json` alone) is **intentionally unsupported**.
 
 | Pattern | Interpretation |
 |---------|----------------|
-| `{root}/{asset}/runs/{run_id}/artifact_manifest.json` | Primary run manifest |
+| `{root}/{asset}/runs/{run_id}/artifact_manifest.json` | Valid product run manifest (schema `artifact-manifest-v0`) |
 
 `transfer-audit` writes `artifact_manifest.json` only after a **successful** run: all chains complete without hard errors, then checkpoint removed, then manifest written. If checkpoint cleanup or manifest write fails, the command errors and the run is not API-listed. Partial failed runs keep CSV/JSON outputs and checkpoint but **no** product manifest.
 
 `cross-chain-summary` **upserts** the existing manifest (required): adds `cross_chain_summary.json` / `.md`, appends a `workflow_steps` entry for `cross-chain-summary`, and preserves `command: transfer-audit` plus transfer-audit artifacts. Re-running cross-chain-summary is idempotent for artifact entries.
 
-Legacy fallback (`qa_report.json` without product manifest) is documented for future listing; not implemented yet.
+`stablecoin-map-package` reads `artifact_manifest.json` only (no directory scanning), validates listed artifacts exist on disk, writes `package_manifest.json` and `stablecoin_map_package.zip`.
 
 ## Endpoints (implemented)
 
@@ -71,7 +79,17 @@ Optional query: `?asset=USDC` — required when the same `run_id` exists under m
 
 ### `GET /api/runs/{run_id}/artifacts`
 
-Artifact metadata from the manifest (paths relative to `artifact_root`).
+Artifact metadata from the manifest (paths relative to `artifact_root`). Only paths listed in `artifact_manifest.json` are returned; extra files on disk are ignored.
+
+### `POST /api/runs/{run_id}/package`
+
+Build or replace `package_manifest.json` and `stablecoin_map_package.zip` from `artifact_manifest.json` (manifest-driven; no directory scanning). Optional query: `?asset=USDC`.
+
+Returns `PackageManifest` JSON. Fails with `manifest_not_found` when `artifact_manifest.json` is missing, or `not_found` when a manifest-listed artifact file is missing on disk.
+
+### `GET /api/runs/{run_id}/package`
+
+Returns existing `package_manifest.json` metadata for the run, or `package_not_found` if not generated yet.
 
 ### `GET /api/artifacts/{*artifact_path}`
 
@@ -97,8 +115,9 @@ GET /api/artifacts/usdc/runs/usdc_7d_20260501_20260508/supply_audit.csv
 | 400 | `invalid_path` | `..`, `.` segments, trailing `/`, NUL, absolute path, directory when a file is required |
 | 400 | `ambiguous_run_id` | Multiple assets share `run_id` without `?asset=` |
 | 404 | `not_found` | Artifact file missing |
-| 404 | `manifest_not_found` | No `artifact_manifest.json` for run |
-| 500 | `io_error` | Unexpected read failure |
+| 404 | `manifest_not_found` | No valid `artifact_manifest.json` for run |
+| 404 | `package_not_found` | No `package_manifest.json` for run |
+| 500 | `io_error` | Unexpected read failure or invalid manifest JSON/schema |
 
 ```json
 {
@@ -129,7 +148,14 @@ src/api/
 
 Enable with `cargo build --features api`.
 
-## Future: evidence packages (not implemented)
+## Package generation (manifest-driven)
+
+- **Input:** valid `artifact_manifest.json` for the run.
+- **Output:** `package_manifest.json` (metadata + included artifact refs copied from the product manifest) and `stablecoin_map_package.zip` (manifest + listed artifacts).
+- **Checksum:** `package_checksum_sha256` is SHA-256 of zip entry bytes excluding `package_manifest.json` (stable while embedding the sidecar manifest).
+- **Not supported:** inferring package contents by scanning the run directory.
+
+## Future: global package listing (not implemented)
 
 ```http
 GET /api/packages
