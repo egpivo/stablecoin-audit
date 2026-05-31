@@ -91,6 +91,46 @@ Returns `PackageManifest` JSON. Fails with `manifest_not_found` when `artifact_m
 
 Returns existing `package_manifest.json` metadata for the run, or `package_not_found` if not generated yet.
 
+### `GET /api/runs/{run_id}/package/download`
+
+Downloads `stablecoin_map_package.zip` for a generated package.
+
+- **Content-Type:** `application/zip`
+- **Content-Disposition:** `attachment; filename="{asset}_{run_id}_stablecoin-map-package.zip"`
+- Returns `package_not_found` when the zip file is missing.
+- Returns `package_corrupt` when `package_manifest.json` is missing or invalid.
+
+Optional query: `?asset=USDC`.
+
+### `POST /api/runs/{run_id}/package/verify`
+
+Manifest-driven verification of a generated package. Reads `package_manifest.json`, recomputes the package content checksum from the zip (excluding the embedded `package_manifest.json` entry), and validates each listed artifact’s `checksum_sha256` against zip entry bytes.
+
+Returns structured JSON:
+
+```json
+{
+  "run_id": "usdc_7d_20260501_20260508",
+  "asset": "USDC",
+  "package_kind": "stablecoin-map-package",
+  "package_valid": true,
+  "expected_package_checksum_sha256": "…",
+  "actual_package_checksum_sha256": "…",
+  "artifacts": [
+    {
+      "path": "supply_audit.csv",
+      "valid": true,
+      "expected_checksum_sha256": "…",
+      "actual_checksum_sha256": "…"
+    }
+  ]
+}
+```
+
+Only artifacts listed in `package_manifest.json` are validated; extra zip entries are ignored for per-artifact results. Verification does not scan the run directory for files.
+
+Optional query: `?asset=USDC`.
+
 ### `GET /api/artifacts/{*artifact_path}`
 
 Serves raw file bytes. Path is relative to `artifact_root` (URL-encoded).
@@ -116,8 +156,9 @@ GET /api/artifacts/usdc/runs/usdc_7d_20260501_20260508/supply_audit.csv
 | 400 | `ambiguous_run_id` | Multiple assets share `run_id` without `?asset=` |
 | 404 | `not_found` | Artifact file missing |
 | 404 | `manifest_not_found` | No valid `artifact_manifest.json` for run |
-| 404 | `package_not_found` | No `package_manifest.json` for run |
-| 500 | `io_error` | Unexpected read failure or invalid manifest JSON/schema |
+| 404 | `package_not_found` | No `package_manifest.json` for run metadata, or package zip missing on download |
+| 422 | `package_corrupt` | `package_manifest.json` missing or invalid when download/verify requires it |
+| 500 | `io_error` | Unexpected read failure or invalid `artifact_manifest.json` JSON/schema |
 
 ```json
 {
@@ -153,7 +194,9 @@ Enable with `cargo build --features api`.
 - **Input:** valid `artifact_manifest.json` for the run.
 - **Output:** `package_manifest.json` (metadata + included artifact refs copied from the product manifest) and `stablecoin_map_package.zip` (manifest + listed artifacts).
 - **Checksum:** `package_checksum_sha256` is SHA-256 of zip entry bytes excluding `package_manifest.json` (stable while embedding the sidecar manifest).
-- **Not supported:** inferring package contents by scanning the run directory.
+- **Download:** `GET /api/runs/{run_id}/package/download` serves the zip bytes with deterministic attachment filename.
+- **Verify:** `POST /api/runs/{run_id}/package/verify` checks package and artifact checksums from `package_manifest.json` only — not directory discovery.
+- **Not supported:** inferring package contents by scanning the run directory; legacy `qa_report.json`-only discovery.
 
 ## Future: global package listing (not implemented)
 

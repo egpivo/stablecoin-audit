@@ -128,6 +128,131 @@ fn finalize_package_outputs(
     Ok(manifest.clone())
 }
 
+/// Per-artifact checksum validation from a package zip.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct PackageArtifactVerification {
+    pub path: String,
+    pub valid: bool,
+    pub expected_checksum_sha256: Option<String>,
+    pub actual_checksum_sha256: Option<String>,
+}
+
+/// Manifest-driven verification report for a generated package.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct PackageVerificationReport {
+    pub run_id: String,
+    pub asset: String,
+    pub package_kind: String,
+    pub package_valid: bool,
+    pub expected_package_checksum_sha256: String,
+    pub actual_package_checksum_sha256: String,
+    pub artifacts: Vec<PackageArtifactVerification>,
+}
+
+/// Verify `package_manifest.json` and `stablecoin_map_package.zip` for a run directory.
+///
+/// Only artifacts listed in `package_manifest.json` are validated; extra zip entries are ignored
+/// for per-artifact results (but do affect the package content checksum if present).
+pub fn verify_stablecoin_map_package(run_dir: &Path) -> Result<PackageVerificationReport> {
+    let manifest = load_package_manifest(run_dir)?;
+    validate_package_manifest(&manifest)?;
+
+    let zip_path = run_dir.join(PACKAGE_ZIP_FILENAME);
+    anyhow::ensure!(
+        zip_path.is_file(),
+        "{PACKAGE_ZIP_FILENAME} not found at {}",
+        zip_path.display()
+    );
+
+    let actual_package_checksum = package_content_checksum(&zip_path)?;
+    let package_checksum_valid = manifest.package_checksum_sha256 == actual_package_checksum;
+
+    let mut artifacts = Vec::with_capacity(manifest.artifacts.len());
+    let mut all_artifacts_valid = true;
+    for expected in &manifest.artifacts {
+        let verification = verify_package_artifact(&zip_path, expected);
+        if !verification.valid {
+            all_artifacts_valid = false;
+        }
+        artifacts.push(verification);
+    }
+
+    Ok(PackageVerificationReport {
+        run_id: manifest.run_id,
+        asset: manifest.asset,
+        package_kind: manifest.package_kind,
+        package_valid: package_checksum_valid && all_artifacts_valid,
+        expected_package_checksum_sha256: manifest.package_checksum_sha256,
+        actual_package_checksum_sha256: actual_package_checksum,
+        artifacts,
+    })
+}
+
+pub fn validate_package_manifest(manifest: &PackageManifest) -> Result<()> {
+    anyhow::ensure!(
+        manifest.package_kind == PACKAGE_KIND,
+        "package_kind must be {PACKAGE_KIND}, got {:?}",
+        manifest.package_kind
+    );
+    anyhow::ensure!(
+        !manifest.package_checksum_sha256.is_empty(),
+        "package_checksum_sha256 must not be empty"
+    );
+    Ok(())
+}
+
+fn verify_package_artifact(
+    zip_path: &Path,
+    expected: &PackageIncludedArtifact,
+) -> PackageArtifactVerification {
+    match sha256_zip_entry(zip_path, &expected.path) {
+        Ok(actual) => {
+            let valid = expected
+                .checksum_sha256
+                .as_deref()
+                .is_none_or(|want| want == actual.as_str());
+            PackageArtifactVerification {
+                path: expected.path.clone(),
+                valid,
+                expected_checksum_sha256: expected.checksum_sha256.clone(),
+                actual_checksum_sha256: Some(actual),
+            }
+        }
+        Err(_) => PackageArtifactVerification {
+            path: expected.path.clone(),
+            valid: false,
+            expected_checksum_sha256: expected.checksum_sha256.clone(),
+            actual_checksum_sha256: None,
+        },
+    }
+}
+
+fn sha256_zip_entry(zip_path: &Path, entry_name: &str) -> Result<String> {
+    let file =
+        File::open(zip_path).with_context(|| format!("open package zip {}", zip_path.display()))?;
+    let mut archive = ZipArchive::new(file)
+        .with_context(|| format!("read package zip {}", zip_path.display()))?;
+    let mut entry = archive
+        .by_name(entry_name)
+        .with_context(|| format!("open zip entry {:?}", entry_name))?;
+    let mut hasher = Sha256::new();
+    std::io::copy(&mut entry, &mut hasher)
+        .with_context(|| format!("read zip entry {:?}", entry_name))?;
+    Ok(hasher
+        .finalize()
+        .iter()
+        .map(|b| format!("{b:02x}"))
+        .collect())
+}
+
+/// Deterministic attachment filename for package download.
+pub fn package_download_filename(manifest: &PackageManifest) -> String {
+    format!(
+        "{}_{}_{}.zip",
+        manifest.asset, manifest.run_id, manifest.package_kind
+    )
+}
+
 fn sync_package_outputs(
     run_dir: &Path,
     manifest: &PackageManifest,
@@ -512,6 +637,70 @@ mod tests {
             load_artifact_manifest(&out).unwrap().artifacts.len(),
             pkg2.artifacts.len()
         );
+        let _ = std::fs::remove_dir_all(&out);
+    }
+
+    #[test]
+    fn verify_reports_valid_generated_package() {
+        let out =
+            std::env::temp_dir().join(format!("stablecoin_pkg_verify_{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&out);
+        std::fs::create_dir_all(&out).unwrap();
+        seed_transfer_audit_run(&out, "pkg_verify").unwrap();
+        generate_stablecoin_map_package(&out, "usdc/runs/pkg_verify/artifact_manifest.json")
+            .unwrap();
+
+        let report = verify_stablecoin_map_package(&out).unwrap();
+        assert!(report.package_valid);
+        assert_eq!(report.package_kind, PACKAGE_KIND);
+        assert_eq!(
+            report.expected_package_checksum_sha256,
+            report.actual_package_checksum_sha256
+        );
+        assert!(report.artifacts.iter().all(|a| a.valid));
+        let _ = std::fs::remove_dir_all(&out);
+    }
+
+    #[test]
+    fn verify_fails_when_package_checksum_mismatch() {
+        let out =
+            std::env::temp_dir().join(format!("stablecoin_pkg_verify_cs_{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&out);
+        std::fs::create_dir_all(&out).unwrap();
+        seed_transfer_audit_run(&out, "pkg_bad_cs").unwrap();
+        generate_stablecoin_map_package(&out, "usdc/runs/pkg_bad_cs/artifact_manifest.json")
+            .unwrap();
+
+        let mut manifest = load_package_manifest(&out).unwrap();
+        manifest.package_checksum_sha256 = "0".repeat(64);
+        write_package_manifest_file(&out, &manifest).unwrap();
+
+        let report = verify_stablecoin_map_package(&out).unwrap();
+        assert!(!report.package_valid);
+        assert_ne!(
+            report.expected_package_checksum_sha256,
+            report.actual_package_checksum_sha256
+        );
+        let _ = std::fs::remove_dir_all(&out);
+    }
+
+    #[test]
+    fn verify_fails_when_artifact_checksum_mismatch() {
+        let out =
+            std::env::temp_dir().join(format!("stablecoin_pkg_verify_art_{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&out);
+        std::fs::create_dir_all(&out).unwrap();
+        seed_transfer_audit_run(&out, "pkg_bad_art").unwrap();
+        generate_stablecoin_map_package(&out, "usdc/runs/pkg_bad_art/artifact_manifest.json")
+            .unwrap();
+
+        let mut manifest = load_package_manifest(&out).unwrap();
+        manifest.artifacts[0].checksum_sha256 = Some("0".repeat(64));
+        write_package_manifest_file(&out, &manifest).unwrap();
+
+        let report = verify_stablecoin_map_package(&out).unwrap();
+        assert!(!report.package_valid);
+        assert!(report.artifacts.iter().any(|a| !a.valid));
         let _ = std::fs::remove_dir_all(&out);
     }
 

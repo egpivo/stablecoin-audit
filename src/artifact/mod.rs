@@ -8,8 +8,10 @@ pub mod writer;
 pub use checksum::sha256_file_hex;
 pub use stablecoin_map_package::{
     generate_stablecoin_map_package, load_package_manifest, package_content_checksum,
-    read_package_manifest_from_zip, PackageIncludedArtifact, PackageManifest, PACKAGE_KIND,
-    PACKAGE_MANIFEST_FILENAME, PACKAGE_ZIP_FILENAME,
+    package_download_filename, read_package_manifest_from_zip, validate_package_manifest,
+    verify_stablecoin_map_package, PackageArtifactVerification, PackageIncludedArtifact,
+    PackageManifest, PackageVerificationReport, PACKAGE_KIND, PACKAGE_MANIFEST_FILENAME,
+    PACKAGE_ZIP_FILENAME,
 };
 
 pub use cross_chain_summary_manifest::{

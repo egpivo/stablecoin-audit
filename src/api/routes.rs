@@ -3,11 +3,11 @@ use std::sync::Arc;
 use axum::extract::{Path, Query, State};
 use axum::http::{header, StatusCode};
 use axum::response::IntoResponse;
-use axum::routing::get;
+use axum::routing::{get, post};
 use axum::{Json, Router};
 use serde::Deserialize;
 
-use crate::artifact::{ArtifactManifest, PackageManifest};
+use crate::artifact::{ArtifactManifest, PackageManifest, PackageVerificationReport};
 
 use super::artifact_store::{ArtifactStore, RunArtifactsResponse, RunsResponse};
 use super::error::ApiError;
@@ -38,6 +38,8 @@ pub fn router(store: ArtifactStore) -> Router {
             "/api/runs/:run_id/package",
             get(get_package).post(create_package),
         )
+        .route("/api/runs/:run_id/package/download", get(download_package))
+        .route("/api/runs/:run_id/package/verify", post(verify_package))
         .route("/api/artifacts/*artifact_path", get(serve_artifact))
         .with_state(state)
 }
@@ -96,6 +98,42 @@ async fn get_package(
 ) -> Result<Json<PackageManifest>, ApiError> {
     let package = state.store.load_package(&run_id, query.asset.as_deref())?;
     Ok(Json(package))
+}
+
+async fn download_package(
+    State(state): State<AppState>,
+    Path(run_id): Path<String>,
+    Query(query): Query<AssetQuery>,
+) -> Result<impl IntoResponse, ApiError> {
+    let (manifest, bytes) = state
+        .store
+        .download_package(&run_id, query.asset.as_deref())?;
+    let filename = crate::artifact::package_download_filename(&manifest);
+    let disposition =
+        header::HeaderValue::from_str(&format!("attachment; filename=\"{filename}\""))
+            .map_err(|e| ApiError::io_error(format!("invalid Content-Disposition: {e}")))?;
+    Ok((
+        StatusCode::OK,
+        [
+            (
+                header::CONTENT_TYPE,
+                header::HeaderValue::from_static("application/zip"),
+            ),
+            (header::CONTENT_DISPOSITION, disposition),
+        ],
+        bytes,
+    ))
+}
+
+async fn verify_package(
+    State(state): State<AppState>,
+    Path(run_id): Path<String>,
+    Query(query): Query<AssetQuery>,
+) -> Result<Json<PackageVerificationReport>, ApiError> {
+    let report = state
+        .store
+        .verify_package(&run_id, query.asset.as_deref())?;
+    Ok(Json(report))
 }
 
 async fn serve_artifact(

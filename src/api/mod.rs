@@ -479,4 +479,299 @@ mod tests {
         );
         let _ = std::fs::remove_dir_all(&root);
     }
+
+    #[tokio::test]
+    async fn download_package_returns_zip_with_headers() {
+        let root = temp_api_root("pkg_download");
+        let _ = std::fs::remove_dir_all(&root);
+        seed_cross_chain_run(&root, "pkg_dl");
+        let store = ArtifactStore::open(&root).unwrap();
+        store.generate_package("pkg_dl", Some("USDC")).unwrap();
+        let app = router(store);
+
+        let response = app
+            .oneshot(
+                Request::get("/api/runs/pkg_dl/package/download?asset=USDC")
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(response.status(), StatusCode::OK);
+        assert_eq!(
+            response.headers().get("content-type").unwrap(),
+            "application/zip"
+        );
+        let disposition = response
+            .headers()
+            .get("content-disposition")
+            .unwrap()
+            .to_str()
+            .unwrap();
+        assert!(disposition.contains("attachment"));
+        assert!(disposition.contains("USDC_pkg_dl_stablecoin-map-package.zip"));
+        let body = axum::body::to_bytes(response.into_body(), usize::MAX)
+            .await
+            .unwrap();
+        assert!(!body.is_empty());
+        let _ = std::fs::remove_dir_all(&root);
+    }
+
+    #[tokio::test]
+    async fn download_package_fails_when_zip_missing() {
+        let root = temp_api_root("pkg_dl_nozip");
+        let _ = std::fs::remove_dir_all(&root);
+        seed_cross_chain_run(&root, "pkg_nozip");
+        let run_dir = root.join("usdc/runs/pkg_nozip");
+        ArtifactStore::open(&root)
+            .unwrap()
+            .generate_package("pkg_nozip", Some("USDC"))
+            .unwrap();
+        std::fs::remove_file(run_dir.join(crate::artifact::PACKAGE_ZIP_FILENAME)).unwrap();
+
+        let app = router(ArtifactStore::open(&root).unwrap());
+        let response = app
+            .oneshot(
+                Request::get("/api/runs/pkg_nozip/package/download?asset=USDC")
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(response.status(), StatusCode::NOT_FOUND);
+        let body = axum::body::to_bytes(response.into_body(), usize::MAX)
+            .await
+            .unwrap();
+        let v: serde_json::Value = serde_json::from_slice(&body).unwrap();
+        assert_eq!(v["error"], "package_not_found");
+        let _ = std::fs::remove_dir_all(&root);
+    }
+
+    #[tokio::test]
+    async fn download_package_fails_when_manifest_missing() {
+        let root = temp_api_root("pkg_dl_noman");
+        let _ = std::fs::remove_dir_all(&root);
+        seed_cross_chain_run(&root, "pkg_noman");
+        let run_dir = root.join("usdc/runs/pkg_noman");
+        ArtifactStore::open(&root)
+            .unwrap()
+            .generate_package("pkg_noman", Some("USDC"))
+            .unwrap();
+        std::fs::remove_file(run_dir.join(crate::artifact::PACKAGE_MANIFEST_FILENAME)).unwrap();
+
+        let app = router(ArtifactStore::open(&root).unwrap());
+        let response = app
+            .oneshot(
+                Request::get("/api/runs/pkg_noman/package/download?asset=USDC")
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(response.status(), StatusCode::UNPROCESSABLE_ENTITY);
+        let body = axum::body::to_bytes(response.into_body(), usize::MAX)
+            .await
+            .unwrap();
+        let v: serde_json::Value = serde_json::from_slice(&body).unwrap();
+        assert_eq!(v["error"], "package_corrupt");
+        let _ = std::fs::remove_dir_all(&root);
+    }
+
+    #[tokio::test]
+    async fn download_package_fails_when_manifest_invalid() {
+        let root = temp_api_root("pkg_dl_badman");
+        let _ = std::fs::remove_dir_all(&root);
+        seed_cross_chain_run(&root, "pkg_badman");
+        let run_dir = root.join("usdc/runs/pkg_badman");
+        ArtifactStore::open(&root)
+            .unwrap()
+            .generate_package("pkg_badman", Some("USDC"))
+            .unwrap();
+        std::fs::write(
+            run_dir.join(crate::artifact::PACKAGE_MANIFEST_FILENAME),
+            r#"{"package_kind":"wrong"}"#,
+        )
+        .unwrap();
+
+        let app = router(ArtifactStore::open(&root).unwrap());
+        let response = app
+            .oneshot(
+                Request::get("/api/runs/pkg_badman/package/download?asset=USDC")
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(response.status(), StatusCode::UNPROCESSABLE_ENTITY);
+        let body = axum::body::to_bytes(response.into_body(), usize::MAX)
+            .await
+            .unwrap();
+        let v: serde_json::Value = serde_json::from_slice(&body).unwrap();
+        assert_eq!(v["error"], "package_corrupt");
+        let _ = std::fs::remove_dir_all(&root);
+    }
+
+    #[tokio::test]
+    async fn verify_package_returns_valid_for_generated_package() {
+        let root = temp_api_root("pkg_verify_ok");
+        let _ = std::fs::remove_dir_all(&root);
+        seed_cross_chain_run(&root, "pkg_vok");
+        let store = ArtifactStore::open(&root).unwrap();
+        store.generate_package("pkg_vok", Some("USDC")).unwrap();
+        let app = router(store);
+
+        let response = app
+            .oneshot(
+                Request::post("/api/runs/pkg_vok/package/verify?asset=USDC")
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(response.status(), StatusCode::OK);
+        let body = axum::body::to_bytes(response.into_body(), usize::MAX)
+            .await
+            .unwrap();
+        let report: crate::artifact::PackageVerificationReport =
+            serde_json::from_slice(&body).unwrap();
+        assert!(report.package_valid);
+        assert_eq!(report.run_id, "pkg_vok");
+        assert_eq!(report.asset, "USDC");
+        let _ = std::fs::remove_dir_all(&root);
+    }
+
+    #[tokio::test]
+    async fn verify_package_invalid_when_checksum_mismatch() {
+        let root = temp_api_root("pkg_verify_badcs");
+        let _ = std::fs::remove_dir_all(&root);
+        seed_cross_chain_run(&root, "pkg_vbad");
+        let run_dir = root.join("usdc/runs/pkg_vbad");
+        ArtifactStore::open(&root)
+            .unwrap()
+            .generate_package("pkg_vbad", Some("USDC"))
+            .unwrap();
+        let mut manifest = crate::artifact::load_package_manifest(&run_dir).unwrap();
+        manifest.package_checksum_sha256 = "0".repeat(64);
+        std::fs::write(
+            run_dir.join(crate::artifact::PACKAGE_MANIFEST_FILENAME),
+            serde_json::to_string_pretty(&manifest).unwrap(),
+        )
+        .unwrap();
+
+        let app = router(ArtifactStore::open(&root).unwrap());
+        let response = app
+            .oneshot(
+                Request::post("/api/runs/pkg_vbad/package/verify?asset=USDC")
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(response.status(), StatusCode::OK);
+        let body = axum::body::to_bytes(response.into_body(), usize::MAX)
+            .await
+            .unwrap();
+        let report: crate::artifact::PackageVerificationReport =
+            serde_json::from_slice(&body).unwrap();
+        assert!(!report.package_valid);
+        let _ = std::fs::remove_dir_all(&root);
+    }
+
+    #[tokio::test]
+    async fn verify_package_invalid_when_artifact_checksum_mismatch() {
+        let root = temp_api_root("pkg_verify_badart");
+        let _ = std::fs::remove_dir_all(&root);
+        seed_cross_chain_run(&root, "pkg_vart");
+        let run_dir = root.join("usdc/runs/pkg_vart");
+        ArtifactStore::open(&root)
+            .unwrap()
+            .generate_package("pkg_vart", Some("USDC"))
+            .unwrap();
+        let mut manifest = crate::artifact::load_package_manifest(&run_dir).unwrap();
+        manifest.artifacts[0].checksum_sha256 = Some("0".repeat(64));
+        std::fs::write(
+            run_dir.join(crate::artifact::PACKAGE_MANIFEST_FILENAME),
+            serde_json::to_string_pretty(&manifest).unwrap(),
+        )
+        .unwrap();
+
+        let app = router(ArtifactStore::open(&root).unwrap());
+        let response = app
+            .oneshot(
+                Request::post("/api/runs/pkg_vart/package/verify?asset=USDC")
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(response.status(), StatusCode::OK);
+        let body = axum::body::to_bytes(response.into_body(), usize::MAX)
+            .await
+            .unwrap();
+        let report: crate::artifact::PackageVerificationReport =
+            serde_json::from_slice(&body).unwrap();
+        assert!(!report.package_valid);
+        assert!(report.artifacts.iter().any(|a| !a.valid));
+        let _ = std::fs::remove_dir_all(&root);
+    }
+
+    #[tokio::test]
+    async fn verify_package_ignores_orphan_zip_entries() {
+        use std::io::Write;
+        use zip::write::SimpleFileOptions;
+        use zip::{ZipArchive, ZipWriter};
+
+        let root = temp_api_root("pkg_verify_orphan");
+        let _ = std::fs::remove_dir_all(&root);
+        seed_cross_chain_run(&root, "pkg_orph");
+        let run_dir = root.join("usdc/runs/pkg_orph");
+        let manifest = ArtifactStore::open(&root)
+            .unwrap()
+            .generate_package("pkg_orph", Some("USDC"))
+            .unwrap();
+        let zip_path = run_dir.join(crate::artifact::PACKAGE_ZIP_FILENAME);
+
+        let original = std::fs::read(&zip_path).unwrap();
+        let mut rewritten = Vec::new();
+        {
+            let reader = std::io::Cursor::new(&original);
+            let mut archive = ZipArchive::new(reader).unwrap();
+            let mut writer = ZipWriter::new(std::io::Cursor::new(&mut rewritten));
+            for i in 0..archive.len() {
+                let mut entry = archive.by_index(i).unwrap();
+                let name = entry.name().to_string();
+                writer
+                    .start_file(name, SimpleFileOptions::default())
+                    .unwrap();
+                std::io::copy(&mut entry, &mut writer).unwrap();
+            }
+            writer
+                .start_file("orphan.csv", SimpleFileOptions::default())
+                .unwrap();
+            writer.write_all(b"orphan\n").unwrap();
+            writer.finish().unwrap();
+        }
+        std::fs::write(&zip_path, rewritten).unwrap();
+
+        let app = router(ArtifactStore::open(&root).unwrap());
+        let response = app
+            .oneshot(
+                Request::post("/api/runs/pkg_orph/package/verify?asset=USDC")
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(response.status(), StatusCode::OK);
+        let body = axum::body::to_bytes(response.into_body(), usize::MAX)
+            .await
+            .unwrap();
+        let report: crate::artifact::PackageVerificationReport =
+            serde_json::from_slice(&body).unwrap();
+        assert_eq!(report.artifacts.len(), manifest.artifacts.len());
+        assert!(!report.artifacts.iter().any(|a| a.path == "orphan.csv"));
+        assert!(report.artifacts.iter().all(|a| a.valid));
+        assert!(!report.package_valid);
+        let _ = std::fs::remove_dir_all(&root);
+    }
 }

@@ -11,6 +11,7 @@ pub enum ErrorCode {
     ManifestNotFound,
     AmbiguousRunId,
     PackageNotFound,
+    PackageCorrupt,
     IoError,
 }
 
@@ -56,6 +57,14 @@ impl ApiError {
         Self {
             status: StatusCode::NOT_FOUND,
             code: ErrorCode::PackageNotFound,
+            message: message.into(),
+        }
+    }
+
+    pub fn package_corrupt(message: impl Into<String>) -> Self {
+        Self {
+            status: StatusCode::UNPROCESSABLE_ENTITY,
+            code: ErrorCode::PackageCorrupt,
             message: message.into(),
         }
     }

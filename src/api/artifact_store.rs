@@ -4,8 +4,9 @@ use std::path::{Path, PathBuf};
 use serde::Serialize;
 
 use crate::artifact::{
-    parse_artifact_manifest_json, ArtifactManifest, ArtifactRef, MANIFEST_FILENAME,
-    PACKAGE_MANIFEST_FILENAME,
+    parse_artifact_manifest_json, verify_stablecoin_map_package, ArtifactManifest, ArtifactRef,
+    PackageManifest, PackageVerificationReport, MANIFEST_FILENAME, PACKAGE_MANIFEST_FILENAME,
+    PACKAGE_ZIP_FILENAME,
 };
 use crate::domain::asset::validate_identifier;
 use crate::report::validate_run_id;
@@ -82,8 +83,9 @@ impl ArtifactStore {
                     run_id,
                     manifest_abs,
                 };
-                if self.read_manifest_at(&loc.manifest_abs).is_ok() {
-                    runs.push(self.descriptor_from_location(&loc)?);
+                match self.read_manifest_at(&loc.manifest_abs) {
+                    Ok(manifest) => runs.push(self.descriptor_from_manifest(&loc, &manifest)?),
+                    Err(_) => continue,
                 }
             }
         }
@@ -158,6 +160,67 @@ impl ArtifactStore {
         })
     }
 
+    pub fn download_package(
+        &self,
+        run_id: &str,
+        asset: Option<&str>,
+    ) -> Result<(PackageManifest, Vec<u8>), ApiError> {
+        let run_dir = self.run_dir_for(run_id, asset)?;
+        let manifest = self.read_package_manifest_or_corrupt(&run_dir)?;
+        let zip_path = run_dir.join(PACKAGE_ZIP_FILENAME);
+        if !zip_path.is_file() {
+            return Err(ApiError::package_not_found(format!(
+                "{PACKAGE_ZIP_FILENAME} not found at {}",
+                zip_path.display()
+            )));
+        }
+        let bytes = fs::read(&zip_path)
+            .map_err(|e| ApiError::io_error(format!("read {}: {e}", zip_path.display())))?;
+        Ok((manifest, bytes))
+    }
+
+    pub fn verify_package(
+        &self,
+        run_id: &str,
+        asset: Option<&str>,
+    ) -> Result<PackageVerificationReport, ApiError> {
+        let run_dir = self.run_dir_for(run_id, asset)?;
+        verify_stablecoin_map_package(&run_dir).map_err(map_verify_package_error)
+    }
+
+    fn run_dir_for(&self, run_id: &str, asset: Option<&str>) -> Result<PathBuf, ApiError> {
+        let loc = self.resolve_run(run_id, asset)?;
+        loc.manifest_abs
+            .parent()
+            .map(|p| p.to_path_buf())
+            .ok_or_else(|| ApiError::io_error("manifest path has no parent directory"))
+    }
+
+    fn read_package_manifest_or_corrupt(
+        &self,
+        run_dir: &Path,
+    ) -> Result<PackageManifest, ApiError> {
+        let path = run_dir.join(PACKAGE_MANIFEST_FILENAME);
+        if !path.is_file() {
+            return Err(ApiError::package_corrupt(format!(
+                "{PACKAGE_MANIFEST_FILENAME} not found at {}",
+                path.display()
+            )));
+        }
+        let text = fs::read_to_string(&path).map_err(|e| {
+            ApiError::package_corrupt(format!("failed to read {}: {e}", path.display()))
+        })?;
+        let manifest: PackageManifest = serde_json::from_str(&text).map_err(|e| {
+            ApiError::package_corrupt(format!(
+                "invalid {PACKAGE_MANIFEST_FILENAME} at {}: {e}",
+                path.display()
+            ))
+        })?;
+        crate::artifact::validate_package_manifest(&manifest)
+            .map_err(|e| ApiError::package_corrupt(e.to_string()))?;
+        Ok(manifest)
+    }
+
     fn resolve_run(&self, run_id: &str, asset: Option<&str>) -> Result<RunLocation, ApiError> {
         validate_run_id(run_id).map_err(|e| ApiError::invalid_path(e.to_string()))?;
         if let Some(a) = asset {
@@ -218,7 +281,11 @@ impl ArtifactStore {
         Ok(matches)
     }
 
-    fn descriptor_from_location(&self, loc: &RunLocation) -> Result<RunDescriptor, ApiError> {
+    fn descriptor_from_manifest(
+        &self,
+        loc: &RunLocation,
+        manifest: &ArtifactManifest,
+    ) -> Result<RunDescriptor, ApiError> {
         let manifest_path = loc
             .manifest_abs
             .strip_prefix(&self.root)
@@ -226,12 +293,10 @@ impl ArtifactStore {
             .to_string_lossy()
             .replace('\\', "/");
 
-        let manifest = self.read_manifest_at(&loc.manifest_abs)?;
-
         Ok(RunDescriptor {
             asset: loc.asset_display.clone(),
             run_id: loc.run_id.clone(),
-            command: Some(manifest.command),
+            command: Some(manifest.command.clone()),
             generated_at: Some(manifest.generated_at.to_rfc3339()),
             manifest_path,
         })
@@ -258,6 +323,22 @@ fn map_package_error(err: anyhow::Error) -> ApiError {
         ApiError::manifest_not_found(msg)
     } else if msg.contains("missing on disk") || msg.contains("manifest lists") {
         ApiError::not_found(msg)
+    } else {
+        ApiError::io_error(msg)
+    }
+}
+
+fn map_verify_package_error(err: anyhow::Error) -> ApiError {
+    let msg = err.to_string();
+    if msg.contains(PACKAGE_MANIFEST_FILENAME)
+        || msg.contains("package_kind")
+        || msg.contains("package_checksum_sha256")
+        || msg.contains("parse")
+        || msg.contains("invalid")
+    {
+        ApiError::package_corrupt(msg)
+    } else if msg.contains(PACKAGE_ZIP_FILENAME) {
+        ApiError::package_not_found(msg)
     } else {
         ApiError::io_error(msg)
     }
