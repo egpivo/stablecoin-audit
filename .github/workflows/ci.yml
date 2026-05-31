@@ -35,6 +35,9 @@ jobs:
       - name: Test (experimental)
         run: cargo test --lib --features experimental
 
+      - name: Test (api)
+        run: cargo test --lib --features api
+
       - name: Build release (v0.1 default)
         run: cargo build --release
 
