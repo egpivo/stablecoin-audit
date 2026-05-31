@@ -90,3 +90,7 @@ cargo run -- stablecoin-map-package --skip-network
 ```
 
 Generated map-package outputs land in `data/benchmarks/`: `global_stablecoin_inventory_v1.csv`, `stablecoin_transfer_volume_selected_rails_v1.csv`, `stablecoin_dependency_summary.csv`, and `stablecoin_dependency_edges.csv`.
+
+## Product architecture (toolkit, not dashboard)
+
+This repo is a **reproducible evidence toolkit** (Rust CLI + filesystem artifacts), not a hosted risk dashboard. Layered design and roadmap: [`docs/product/backend_architecture_v0.md`](docs/product/backend_architecture_v0.md). Manifest schema: [`docs/product/artifact_manifest_schema_v0.md`](docs/product/artifact_manifest_schema_v0.md). Read-only evidence API (v0.3 skeleton): `cargo run --features api -- serve --artifact-root out/`.
