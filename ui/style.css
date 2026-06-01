@@ -81,6 +81,11 @@ code {
   min-height: calc(100vh - 140px);
 }
 
+.content-pane {
+  padding: 1.25rem 1.5rem 2rem;
+  overflow-y: auto;
+}
+
 .run-list-panel {
   background: var(--surface);
   border-right: 1px solid var(--border);
@@ -146,12 +151,12 @@ code {
 }
 
 .run-detail {
-  padding: 1.25rem 1.5rem 2rem;
-  overflow-y: auto;
+  padding: 0;
+  overflow: visible;
 }
 
 .empty-state {
-  padding: 2rem 1.5rem;
+  padding: 0.5rem 0;
   color: var(--muted);
 }
 
@@ -557,6 +562,43 @@ a.download-link:hover {
 .package-actions button:disabled {
   opacity: 0.45;
   cursor: not-allowed;
+}
+
+.request-builder-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(200px, 1fr));
+  gap: 0.6rem 0.9rem;
+  margin-bottom: 0.75rem;
+}
+
+.request-builder-grid label {
+  display: flex;
+  flex-direction: column;
+  gap: 0.25rem;
+  font-size: 0.8rem;
+  color: var(--muted);
+}
+
+.request-builder-grid input[type="text"],
+.request-builder-grid input[type="number"] {
+  font: inherit;
+  font-size: 0.9rem;
+  color: var(--text);
+  padding: 0.4rem 0.5rem;
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  background: var(--surface);
+}
+
+.checkbox-label {
+  flex-direction: row !important;
+  align-items: center;
+  gap: 0.45rem !important;
+  padding-top: 1.35rem;
+}
+
+.request-builder-error {
+  color: var(--unsupported-border);
 }
 
 .package-result {

@@ -17,6 +17,15 @@ const btnBuildPackage = document.getElementById("btn-build-package");
 const btnDownloadPackage = document.getElementById("btn-download-package");
 const btnVerifyPackage = document.getElementById("btn-verify-package");
 const healthStatusEl = document.getElementById("health-status");
+const reqAssetEl = document.getElementById("req-asset");
+const reqRunIdEl = document.getElementById("req-run-id");
+const reqChainEl = document.getElementById("req-chain");
+const reqFromBlockEl = document.getElementById("req-from-block");
+const reqToBlockEl = document.getElementById("req-to-block");
+const reqFreshEl = document.getElementById("req-fresh");
+const reqMessageEl = document.getElementById("request-builder-message");
+const reqCommandEl = document.getElementById("request-builder-command");
+const btnCopyRequestCommand = document.getElementById("btn-copy-request-command");
 
 /** @type {RunDescriptor | null} */
 let selectedRun = null;
@@ -67,6 +76,8 @@ const UNSUPPORTED_SUMMARY = [
   },
 ];
 
+let generatedRequestCommand = "";
+
 async function apiFetch(path, options = {}) {
   const res = await fetch(`${API}${path}`, options);
   if (!res.ok) {
@@ -107,6 +118,13 @@ function escapeHtml(text) {
   const div = document.createElement("div");
   div.textContent = text;
   return div.innerHTML;
+}
+
+function shellArg(value) {
+  const v = String(value ?? "");
+  if (v.length === 0) return "''";
+  if (/^[A-Za-z0-9._:/-]+$/.test(v)) return v;
+  return `'${v.replace(/'/g, `'\\''`)}'`;
 }
 
 function basename(path) {
@@ -219,6 +237,111 @@ function deriveSupplyReconciliation(qaReport) {
     label: `PARTIAL (${passCount} PASS, ${unavailableCount} UNAVAILABLE)`,
     tone: "warn",
   };
+}
+
+function validateRequestBuilderInput() {
+  const asset = (reqAssetEl.value || "").trim();
+  const runId = (reqRunIdEl.value || "").trim();
+  const chain = (reqChainEl.value || "").trim().toLowerCase();
+  const fromBlockRaw = (reqFromBlockEl.value || "").trim();
+  const toBlockRaw = (reqToBlockEl.value || "").trim();
+  const identifierPattern = /^[A-Za-z0-9_-]+$/;
+
+  if (!asset) return { error: "asset is required." };
+  if (!runId) return { error: "run_id is required." };
+  if (!chain) return { error: "chain is required." };
+  if (!identifierPattern.test(asset)) {
+    return { error: "asset must match [A-Za-z0-9_-]+" };
+  }
+  if (!identifierPattern.test(runId)) {
+    return { error: "run_id must match [A-Za-z0-9_-]+" };
+  }
+  if (!identifierPattern.test(chain)) {
+    return { error: "chain must match [A-Za-z0-9_-]+" };
+  }
+  if (!fromBlockRaw || !toBlockRaw) return { error: "from_block and to_block are required." };
+
+  const fromBlock = Number(fromBlockRaw);
+  const toBlock = Number(toBlockRaw);
+  if (!Number.isInteger(fromBlock) || fromBlock < 0) {
+    return { error: "from_block must be a non-negative integer." };
+  }
+  if (fromBlock === 0) {
+    return { error: "from_block 0 is not supported" };
+  }
+  if (!Number.isInteger(toBlock) || toBlock < 0) {
+    return { error: "to_block must be a non-negative integer." };
+  }
+  if (toBlock < fromBlock) {
+    return { error: "to_block must be greater than or equal to from_block." };
+  }
+
+  return {
+    asset,
+    runId,
+    chain,
+    fromBlock,
+    toBlock,
+    fresh: !!reqFreshEl.checked,
+  };
+}
+
+function buildRequestCommand() {
+  const parsed = validateRequestBuilderInput();
+  if (parsed.error) {
+    generatedRequestCommand = "";
+    reqMessageEl.textContent = parsed.error;
+    reqMessageEl.classList.add("request-builder-error");
+    reqCommandEl.textContent =
+      "cargo run -- transfer-audit --asset <ASSET> --run-id <RUN_ID> \\\n  --window <chain>:<from_block>:<to_block>";
+    btnCopyRequestCommand.disabled = true;
+    return;
+  }
+
+  const windowArg = `${parsed.chain}:${parsed.fromBlock}:${parsed.toBlock}`;
+  let command =
+    `cargo run -- transfer-audit --asset ${shellArg(parsed.asset)} --run-id ${shellArg(parsed.runId)} \\\n` +
+    `  --window ${shellArg(windowArg)}`;
+  if (parsed.fresh) command += " \\\n  --fresh";
+
+  generatedRequestCommand = command;
+  reqCommandEl.textContent = command;
+  reqMessageEl.textContent =
+    "Copy and run this command in your terminal. Then refresh the run list to inspect generated evidence.";
+  reqMessageEl.classList.remove("request-builder-error");
+  btnCopyRequestCommand.disabled = false;
+}
+
+async function copyRequestCommand() {
+  if (!generatedRequestCommand) return;
+  try {
+    await navigator.clipboard.writeText(generatedRequestCommand);
+    reqMessageEl.textContent = "Command copied.";
+    reqMessageEl.classList.remove("request-builder-error");
+  } catch {
+    const temp = document.createElement("textarea");
+    temp.value = generatedRequestCommand;
+    document.body.appendChild(temp);
+    temp.select();
+    document.execCommand("copy");
+    document.body.removeChild(temp);
+    reqMessageEl.textContent = "Command copied.";
+    reqMessageEl.classList.remove("request-builder-error");
+  }
+}
+
+function setRequestBuilderFromRun(manifest, qaReport) {
+  if (!manifest) return;
+  reqAssetEl.value = (manifest.asset || reqAssetEl.value || "USDC").toUpperCase();
+  reqRunIdEl.value = manifest.run_id || reqRunIdEl.value || "";
+
+  const firstChain = qaReport?.chains?.[0];
+  if (firstChain) {
+    reqChainEl.value = firstChain.chain || reqChainEl.value || "ethereum";
+    if (firstChain.from_block != null) reqFromBlockEl.value = firstChain.from_block;
+    if (firstChain.resolved_to_block != null) reqToBlockEl.value = firstChain.resolved_to_block;
+  }
+  buildRequestCommand();
 }
 
 function formatChainsWindows(manifest, qaReport) {
@@ -530,6 +653,7 @@ async function selectRun(run) {
     renderClaimsCompact(manifest);
     renderClaimsFull(manifest);
     renderArtifacts(artifacts);
+    setRequestBuilderFromRun(manifest, qaReport);
 
     await loadPackagePanel(run, manifest, artifacts, qaReport);
   } catch (err) {
@@ -624,6 +748,12 @@ btnVerifyPackage.addEventListener("click", async () => {
   }
 });
 
+[reqAssetEl, reqRunIdEl, reqChainEl, reqFromBlockEl, reqToBlockEl, reqFreshEl].forEach((el) => {
+  el.addEventListener("input", buildRequestCommand);
+  el.addEventListener("change", buildRequestCommand);
+});
+btnCopyRequestCommand.addEventListener("click", copyRequestCommand);
+
 async function checkHealth() {
   try {
     const health = await apiFetch("/health");
@@ -634,4 +764,7 @@ async function checkHealth() {
 }
 
 checkHealth();
+reqAssetEl.value = "USDC";
+reqChainEl.value = "ethereum";
+buildRequestCommand();
 loadRuns();

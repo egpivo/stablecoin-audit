@@ -29,7 +29,46 @@
       <ul id="run-list" class="run-list"></ul>
     </nav>
 
-    <main id="run-detail" class="run-detail" hidden>
+    <div class="content-pane">
+      <section class="panel" id="request-builder-panel">
+        <h2>Audit request builder</h2>
+        <p class="panel-status">
+          Build a reproducible <code>transfer-audit</code> command here. Execution still happens via Rust CLI on your machine.
+        </p>
+        <div class="request-builder-grid">
+          <label>
+            <span>asset</span>
+            <input id="req-asset" type="text" placeholder="USDC" />
+          </label>
+          <label>
+            <span>run_id</span>
+            <input id="req-run-id" type="text" placeholder="demo_001" />
+          </label>
+          <label>
+            <span>chain</span>
+            <input id="req-chain" type="text" placeholder="ethereum" />
+          </label>
+          <label>
+            <span>from_block</span>
+            <input id="req-from-block" type="number" min="1" step="1" placeholder="24000000" />
+          </label>
+          <label>
+            <span>to_block</span>
+            <input id="req-to-block" type="number" min="0" step="1" placeholder="24001000" />
+          </label>
+          <label class="checkbox-label">
+            <input id="req-fresh" type="checkbox" />
+            <span>fresh (--fresh)</span>
+          </label>
+        </div>
+        <div id="request-builder-message" class="panel-status"></div>
+        <pre id="request-builder-command" class="package-result"></pre>
+        <div class="package-actions">
+          <button type="button" id="btn-copy-request-command">Copy command</button>
+        </div>
+      </section>
+
+      <main id="run-detail" class="run-detail" hidden>
       <section class="panel panel-primary" id="audit-summary-panel">
         <h2>Audit summary</h2>
         <div id="audit-summary-cards" class="summary-cards"></div>
@@ -94,11 +133,12 @@
           </table>
         </div>
       </details>
-    </main>
+      </main>
 
-    <main id="empty-state" class="empty-state">
-      <p>Select a run from the list, or start the API with completed runs under <code>out/</code>.</p>
-    </main>
+      <main id="empty-state" class="empty-state">
+        <p>Select a run from the list, or start the API with completed runs under <code>out/</code>.</p>
+      </main>
+    </div>
   </div>
 
   <footer class="site-footer">
