@@ -12,7 +12,7 @@ Canonical claim definitions live in `src/audit/claims.rs`. Workflows must not ha
 | `required_evidence_kinds` | `ArtifactKind` values resolved to paths at manifest write |
 | `limitations` | Scope limits and failure interpretation |
 | `warnings` | Default claim-local warnings (empty if none) |
-| `produced_by` | Engine command (`transfer-audit`, `cross-chain-summary`) |
+| `produced_by` | Engine command (`transfer-audit`, `cross-chain-summary`) or `audit-product` for shared unsupported boundaries |
 
 ## Manifest ClaimBoundary
 
@@ -39,14 +39,21 @@ At runtime, `instantiate_claim(claim_id, available_paths)` builds a `ClaimBounda
 | `cross_chain_per_deployment_comparison` | conditional |
 | `per_chain_totalSupply_not_circulating_supply` | conditional |
 
-### Unsupported (explicit boundaries)
+### Shared unsupported boundaries (`audit-product`)
+
+Re-emitted by `transfer-audit` and `cross-chain-summary` from the same catalog entry:
+
+| claim_id | produced_by | Notes |
+|----------|-------------|-------|
+| `bridge_backing_not_verified_without_bridge_collateral` | audit-product | No bridge collateral fetch; not owned by one engine |
+
+### Transfer-audit unsupported (engine-local)
 
 | claim_id | produced_by | Notes |
 |----------|-------------|-------|
 | `circulating_supply_not_verified` | transfer-audit | Cross-chain circulating supply |
 | `fiat_reserve_not_verified` | transfer-audit | No bank/attestation data |
 | `liquidity_exposure_not_measured` | transfer-audit | No DEX/CEX/oracle depth |
-| `bridge_backing_not_verified_without_bridge_collateral` | cross-chain-summary | No bridge collateral fetch |
 | `peg_stability` | transfer-audit | Out of scope |
 | `redemption_capacity` | transfer-audit | Out of scope |
 | `user_geography` | transfer-audit | Out of scope |

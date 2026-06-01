@@ -114,7 +114,7 @@ mod tests {
                 "transfer_log_fetch".into(),
                 "supply_invariant_per_chain".into(),
             ],
-            out_of_scope: vec!["reserve_adequacy".into()],
+            out_of_scope: vec![crate::audit::CLAIM_FIAT_RESERVE_NOT_VERIFIED.into()],
             data_sources: vec![DataSourceRef {
                 source_name: "rpc:ethereum".into(),
                 source_type: "evm_rpc".into(),

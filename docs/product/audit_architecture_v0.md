@@ -56,9 +56,11 @@ The manifest is the **product run contract**: it indexes artifacts, records work
 
 ## Unsupported until evidence exists
 
-Bridge backing and liquidity exposure are represented only as **unsupported** catalog claims until corresponding evidence sources exist:
+Bridge backing is represented as a **shared** unsupported catalog claim (`produced_by: audit-product`) re-emitted by transfer-audit and cross-chain-summary until bridge collateral evidence exists:
 
 - `bridge_backing_not_verified_without_bridge_collateral` — no bridge collateral fetch
+Liquidity exposure is represented only as an **unsupported** catalog claim until corresponding evidence sources exist:
+
 - `liquidity_exposure_not_measured` — no DEX/CEX/oracle depth series
 
 No bridge-backing-audit or liquidity-exposure-audit engine is implemented in v0.

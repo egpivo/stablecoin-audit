@@ -501,7 +501,7 @@ async fn run_inner(
         out_dir.display()
     );
     println!(
-        "  decoded_transfers.csv, supply_audit.csv, supply_audit.md, qa_report.json,\n  provenance.json, summary.md, audit_plan.json"
+        "  decoded_transfers.csv, supply_audit.csv, supply_audit.md, qa_report.json,\n  provenance.json, summary.md, audit_plan.json,\n  evidence_sources.json, deployment_registry.json, chain_windows.json,\n  canonical_transfers.csv, supply_snapshots.csv"
     );
 
     if any_hard_error {
@@ -519,8 +519,9 @@ async fn run_inner(
     println!("Checkpoint cleared.");
 
     write_transfer_audit_manifest(&out_dir, &manifest_params)?;
+    crate::audit::validate_transfer_audit_product_run(&out_dir)?;
 
-    println!("  artifact_manifest.json (run complete — discoverable via API)");
+    println!("  artifact_manifest.json (product run complete — discoverable via API)");
     println!(
         "\nNext (≥2 chains): cargo run -- cross-chain-summary --asset {} --run-id {}",
         asset.to_uppercase(),

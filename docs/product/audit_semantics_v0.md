@@ -93,13 +93,18 @@ Each entry in `supported_claims` or `unsupported_claims`:
 | `supply_snapshot_available` | conditional | Pinned supply boundaries and mint/burn aggregates |
 | `circulating_supply_not_verified` | unsupported | Cross-chain circulating supply not attested |
 
+### Shared unsupported boundaries (`audit-product`)
+
+| claim id | status | Role |
+|----------|--------|------|
+| `bridge_backing_not_verified_without_bridge_collateral` | unsupported | No bridge collateral attestation; re-emitted by transfer-audit and cross-chain-summary |
+
 ### Cross-chain-summary claims (v0)
 
 | claim id | status | Role |
 |----------|--------|------|
 | `cross_chain_per_deployment_comparison` | conditional | Per-deployment rollup on one schema |
 | `per_chain_totalSupply_not_circulating_supply` | conditional | Sum of per-chain totals ≠ circulating supply |
-| `bridge_backing_not_verified_without_bridge_collateral` | unsupported | No bridge collateral attestation |
 
 Cross-chain upsert merges claims by `claim` id (idempotent replace).
 

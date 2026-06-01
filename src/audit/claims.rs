@@ -15,6 +15,9 @@ pub struct ClaimDefinition {
     pub produced_by: &'static str,
 }
 
+/// Shared unsupported boundaries re-emitted by multiple engines (not owned by one workflow).
+pub const PRODUCED_BY_AUDIT_PRODUCT: &str = "audit-product";
+
 pub const CLAIM_TRANSFER_ACTIVITY_RECONSTRUCTIBLE: &str = "transfer_activity_reconstructible";
 pub const CLAIM_SUPPLY_SNAPSHOT_AVAILABLE: &str = "supply_snapshot_available";
 pub const CLAIM_SUPPLY_RECONCILIATION_AVAILABLE: &str = "supply_reconciliation_available";
@@ -126,10 +129,10 @@ const CATALOG: &[ClaimDefinition] = &[
         statement: "Bridge collateral, mint authority, and reserve backing are not verified without bridge-specific collateral evidence.",
         required_evidence_kinds: &[],
         limitations: &[
-            "Cross-chain summary compares on-chain totals only; bridge attestations and reserve data are out of scope.",
+            "On-chain transfer-audit and cross-chain-summary compare scoped deployments only; bridge attestations and collateral reserve data are out of scope without a bridge-backing evidence source.",
         ],
         warnings: &[],
-        produced_by: "cross-chain-summary",
+        produced_by: PRODUCED_BY_AUDIT_PRODUCT,
     },
     ClaimDefinition {
         claim_id: CLAIM_FIAT_RESERVE_NOT_VERIFIED,
@@ -236,19 +239,22 @@ pub fn transfer_audit_supported_claim_ids() -> &'static [&'static str] {
     ]
 }
 
+const AUDIT_PLAN_OUT_OF_SCOPE: &[&str] = &[
+    CLAIM_CIRCULATING_SUPPLY_NOT_VERIFIED,
+    CLAIM_BRIDGE_BACKING_NOT_VERIFIED,
+    CLAIM_FIAT_RESERVE_NOT_VERIFIED,
+    CLAIM_LIQUIDITY_EXPOSURE_NOT_MEASURED,
+    CLAIM_PEG_STABILITY,
+    CLAIM_REDEMPTION_CAPACITY,
+    CLAIM_USER_GEOGRAPHY,
+    CLAIM_HOLDER_IDENTITY,
+    CLAIM_ACTUAL_SWAP_ROUTING,
+    CLAIM_ISSUER_INTENT,
+    CLAIM_STRESS_TRANSMISSION,
+];
+
 pub fn transfer_audit_unsupported_claim_ids() -> &'static [&'static str] {
-    &[
-        CLAIM_CIRCULATING_SUPPLY_NOT_VERIFIED,
-        CLAIM_FIAT_RESERVE_NOT_VERIFIED,
-        CLAIM_LIQUIDITY_EXPOSURE_NOT_MEASURED,
-        CLAIM_PEG_STABILITY,
-        CLAIM_REDEMPTION_CAPACITY,
-        CLAIM_USER_GEOGRAPHY,
-        CLAIM_HOLDER_IDENTITY,
-        CLAIM_ACTUAL_SWAP_ROUTING,
-        CLAIM_ISSUER_INTENT,
-        CLAIM_STRESS_TRANSMISSION,
-    ]
+    AUDIT_PLAN_OUT_OF_SCOPE
 }
 
 pub fn cross_chain_supported_claim_ids() -> &'static [&'static str] {
@@ -262,8 +268,22 @@ pub fn cross_chain_unsupported_claim_ids() -> &'static [&'static str] {
     &[CLAIM_BRIDGE_BACKING_NOT_VERIFIED]
 }
 
+pub fn shared_boundary_claim_ids() -> &'static [&'static str] {
+    &[CLAIM_BRIDGE_BACKING_NOT_VERIFIED]
+}
+
 pub fn audit_plan_out_of_scope_ids() -> &'static [&'static str] {
-    transfer_audit_unsupported_claim_ids()
+    AUDIT_PLAN_OUT_OF_SCOPE
+}
+
+/// Claim ids that must never appear as supported/conditional outputs for transfer-audit alone.
+pub fn transfer_audit_forbidden_supported_claim_ids() -> &'static [&'static str] {
+    &[
+        CLAIM_CIRCULATING_SUPPLY_NOT_VERIFIED,
+        CLAIM_BRIDGE_BACKING_NOT_VERIFIED,
+        CLAIM_FIAT_RESERVE_NOT_VERIFIED,
+        CLAIM_LIQUIDITY_EXPOSURE_NOT_MEASURED,
+    ]
 }
 
 fn kind_to_candidate_paths(kind: ArtifactKind) -> &'static [&'static str] {
@@ -371,18 +391,41 @@ mod tests {
             .all(|c| c.status == ClaimStatus::Unsupported));
         assert!(unsupported
             .iter()
+            .any(|c| c.claim == CLAIM_BRIDGE_BACKING_NOT_VERIFIED));
+        assert!(unsupported
+            .iter()
             .any(|c| c.claim == CLAIM_LIQUIDITY_EXPOSURE_NOT_MEASURED));
     }
 
     #[test]
-    fn bridge_and_liquidity_claims_are_unsupported_only() {
+    fn forbidden_claims_never_supported_for_transfer_audit() {
+        for id in transfer_audit_forbidden_supported_claim_ids() {
+            let def = lookup_claim(id).unwrap();
+            assert_eq!(def.default_status, ClaimStatus::Unsupported);
+            assert!(def.required_evidence_kinds.is_empty());
+        }
+    }
+
+    #[test]
+    fn liquidity_and_reserve_claims_are_unsupported_only() {
         for id in [
-            CLAIM_BRIDGE_BACKING_NOT_VERIFIED,
             CLAIM_LIQUIDITY_EXPOSURE_NOT_MEASURED,
+            CLAIM_FIAT_RESERVE_NOT_VERIFIED,
+            CLAIM_CIRCULATING_SUPPLY_NOT_VERIFIED,
         ] {
             let def = lookup_claim(id).unwrap();
             assert_eq!(def.default_status, ClaimStatus::Unsupported);
             assert!(def.required_evidence_kinds.is_empty());
         }
+    }
+
+    #[test]
+    fn bridge_backing_is_shared_audit_product_boundary() {
+        let def = lookup_claim(CLAIM_BRIDGE_BACKING_NOT_VERIFIED).unwrap();
+        assert_eq!(def.produced_by, PRODUCED_BY_AUDIT_PRODUCT);
+        assert_eq!(def.default_status, ClaimStatus::Unsupported);
+        assert!(transfer_audit_unsupported_claim_ids().contains(&CLAIM_BRIDGE_BACKING_NOT_VERIFIED));
+        assert!(cross_chain_unsupported_claim_ids().contains(&CLAIM_BRIDGE_BACKING_NOT_VERIFIED));
+        assert!(shared_boundary_claim_ids().contains(&CLAIM_BRIDGE_BACKING_NOT_VERIFIED));
     }
 }
