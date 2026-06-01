@@ -325,6 +325,7 @@ mod tests {
                 row_count: None,
                 checksum_sha256: None,
                 description: "test".into(),
+                schema: None,
             }],
             supported_claims: vec![ClaimBoundary::new(
                 "supply_invariant",
@@ -358,6 +359,7 @@ mod tests {
                 row_count: None,
                 checksum_sha256: None,
                 description: "test".into(),
+                schema: None,
             }],
             supported_claims: vec![ClaimBoundary::new(
                 "gates",
@@ -391,6 +393,7 @@ mod tests {
                 row_count: None,
                 checksum_sha256: None,
                 description: "test".into(),
+                schema: None,
             }],
             workflow_steps: vec![WorkflowStep {
                 command: "cross-chain-summary".into(),

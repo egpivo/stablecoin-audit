@@ -1,7 +1,7 @@
 //! Transfer-log audit: chunked `eth_getLogs`, decode, dedup, supply reconciliation.
 
 use alloy::eips::BlockNumberOrTag;
-use alloy::primitives::{Address, I256, U256};
+use alloy::primitives::{Address, U256};
 use alloy::providers::Provider;
 use alloy::rpc::types::{BlockId, BlockTransactionsKind};
 use alloy::sol;
@@ -16,8 +16,10 @@ use crate::artifact::{
     transfer_audit_manifest::{ManifestChainInput, TransferAuditManifestParams},
     write_transfer_audit_manifest,
 };
+use crate::audit::supply::build_supply_metrics_from_events;
+use crate::audit::{write_canonical_audit_tables, CanonicalWriteParams};
 use crate::config::{load_single_token_config, TokenConfig};
-use crate::decode::{decode_transfer_log, dedup_transfer_events, sample_decode_qa};
+use crate::decode::{decode_transfer_log, sample_decode_qa};
 use crate::fetch::{fetch_transfer_logs_incremental, FetchParams};
 use crate::report::{default_run_id, ensure_run_out_dir, format_token_amount, validate_run_id};
 use crate::rpc::transfer_checkpoint::{
@@ -28,7 +30,6 @@ use std::path::Path;
 
 const DEFAULT_CHUNK_SIZE: u64 = 500;
 const QA_SAMPLE_SIZE: usize = 100;
-const ZERO_ADDR: &str = "0x0000000000000000000000000000000000000000";
 
 sol! {
     #[sol(rpc)]
@@ -85,43 +86,7 @@ pub struct QaGates {
     provenance_stamped: String,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct SupplyAuditRow {
-    chain: String,
-    chain_id: u64,
-    contract_address: String,
-    from_block: u64,
-    resolved_to_block: Option<u64>,
-    to_block_requested: String,
-    chunk_size: u64,
-    transfer_event_count: usize,
-    active_senders: usize,
-    active_recipients: usize,
-    mint_count: usize,
-    burn_count: usize,
-    plain_transfer_count: usize,
-    sum_mints_raw: String,
-    sum_burns_raw: String,
-    net_mint_raw: Option<String>,
-    total_supply_at_start_minus_1: Option<String>,
-    total_supply_at_start_minus_1_provenance: String,
-    total_supply_at_end: Option<String>,
-    onchain_delta_raw: Option<String>,
-    discrepancy_raw: Option<String>,
-    metadata_call_pass: bool,
-    historical_supply_pass: bool,
-    no_duplicate_logs_pass: Option<bool>,
-    transfer_decode_pass: Option<bool>,
-    supply_invariant_pass: Option<bool>,
-    duplicate_count: usize,
-    full_decode_error_count: usize,
-    /// Block header time for `from_block` (window start); not written to CSV.
-    #[serde(skip)]
-    window_start_block_timestamp_rfc3339: Option<String>,
-    /// Block header time for the resolved end block of the log window; not written to CSV.
-    #[serde(skip)]
-    window_end_block_timestamp_rfc3339: Option<String>,
-}
+pub use crate::audit::supply::SupplyAuditRow;
 
 pub(crate) fn gate_csv(pass: bool) -> &'static str {
     if pass {
@@ -137,24 +102,6 @@ pub(crate) fn gate_opt_csv(pass: Option<bool>) -> &'static str {
         Some(false) => "FAIL",
         None => "UNAVAILABLE",
     }
-}
-
-/// Mint/burn aggregates vs pinned `totalSupply` boundaries (signed I256).
-pub(crate) fn compute_supply_invariant(
-    sum_mints: U256,
-    sum_burns: U256,
-    supply_start: U256,
-    supply_end: U256,
-) -> (I256, I256, I256, bool) {
-    let net_mint = I256::from_raw(sum_mints) - I256::from_raw(sum_burns);
-    let onchain_delta = I256::from_raw(supply_end) - I256::from_raw(supply_start);
-    let discrepancy = net_mint - onchain_delta;
-    (
-        net_mint,
-        onchain_delta,
-        discrepancy,
-        discrepancy == I256::ZERO,
-    )
 }
 
 /// Parse `--window chain:from:to` (inclusive end block `to`, same convention as `--to-block`).
@@ -751,94 +698,6 @@ can be read side-by-side for the same asset symbol.\n",
     Ok(())
 }
 
-/// Deduped transfer aggregates and supply-invariant fields (no RPC).
-pub(crate) struct SupplyMetrics {
-    pub deduped: Vec<crate::decode::TransferEvent>,
-    pub duplicate_count: usize,
-    pub mint_count: usize,
-    pub burn_count: usize,
-    pub plain_transfer_count: usize,
-    pub active_senders: usize,
-    pub active_recipients: usize,
-    pub sum_mints: U256,
-    pub sum_burns: U256,
-    pub net_mint: Option<I256>,
-    pub onchain_delta: Option<I256>,
-    pub discrepancy: Option<I256>,
-    pub supply_invariant_pass: Option<bool>,
-    pub no_duplicate_logs_pass: bool,
-    pub transfer_decode_pass: bool,
-}
-
-pub(crate) fn build_supply_metrics_from_events(
-    events: Vec<crate::decode::TransferEvent>,
-    decode_errors: usize,
-    supply_start: Option<U256>,
-    supply_end: Option<U256>,
-) -> SupplyMetrics {
-    let (deduped, dup_count) = dedup_transfer_events(events);
-
-    let mint_count = deduped.iter().filter(|e| e.kind == "mint").count();
-    let burn_count = deduped.iter().filter(|e| e.kind == "burn").count();
-    let plain_transfer_count = deduped.iter().filter(|e| e.kind == "transfer").count();
-
-    let mut senders: HashSet<String> = HashSet::new();
-    let mut recipients: HashSet<String> = HashSet::new();
-    for e in &deduped {
-        if e.from != ZERO_ADDR {
-            senders.insert(e.from.clone());
-        }
-        if e.to != ZERO_ADDR {
-            recipients.insert(e.to.clone());
-        }
-    }
-
-    let sum_mints: U256 = deduped
-        .iter()
-        .filter(|e| e.kind == "mint")
-        .fold(U256::ZERO, |acc, e| acc + e.value_u256);
-    let sum_burns: U256 = deduped
-        .iter()
-        .filter(|e| e.kind == "burn")
-        .fold(U256::ZERO, |acc, e| acc + e.value_u256);
-
-    let (net_mint_opt, onchain_delta_opt, discrepancy_opt, invariant_pass) = if decode_errors > 0 {
-        (None, None, None, None)
-    } else {
-        match (supply_start, supply_end) {
-            (Some(start), Some(end)) => {
-                let (net_mint, onchain_delta, discrepancy, pass) =
-                    compute_supply_invariant(sum_mints, sum_burns, start, end);
-                (
-                    Some(net_mint),
-                    Some(onchain_delta),
-                    Some(discrepancy),
-                    Some(pass),
-                )
-            }
-            _ => (None, None, None, None),
-        }
-    };
-
-    SupplyMetrics {
-        deduped,
-        duplicate_count: dup_count,
-        mint_count,
-        burn_count,
-        plain_transfer_count,
-        active_senders: senders.len(),
-        active_recipients: recipients.len(),
-        sum_mints,
-        sum_burns,
-        net_mint: net_mint_opt,
-        onchain_delta: onchain_delta_opt,
-        discrepancy: discrepancy_opt,
-        supply_invariant_pass: invariant_pass,
-        no_duplicate_logs_pass: dup_count == 0,
-        transfer_decode_pass: decode_errors == 0,
-    }
-}
-
 /// Write transfer-audit artifacts (CSV/MD/JSON) for a completed run.
 #[allow(clippy::too_many_arguments)]
 pub(crate) fn write_run_artifacts(
@@ -901,6 +760,16 @@ pub(crate) fn write_run_artifacts(
         per_chain_spans,
         supply_rows,
         qa_chains,
+    )?;
+    write_canonical_audit_tables(
+        out_dir,
+        &CanonicalWriteParams {
+            asset,
+            run_id,
+            captured_at: generated_at,
+            events: all_events,
+            supply_rows,
+        },
     )?;
     Ok(())
 }
@@ -1112,6 +981,8 @@ pub(crate) async fn process_chain(
             total_supply_at_start_minus_1: None,
             total_supply_at_start_minus_1_provenance: "skipped".into(),
             total_supply_at_end: None,
+            total_supply_start_raw: None,
+            total_supply_end_raw: None,
             onchain_delta_raw: None,
             discrepancy_raw: None,
             metadata_call_pass,
@@ -1121,6 +992,7 @@ pub(crate) async fn process_chain(
             supply_invariant_pass: None,
             duplicate_count: 0,
             full_decode_error_count: 0,
+            total_supply_start_block_timestamp_rfc3339: None,
             window_start_block_timestamp_rfc3339: None,
             window_end_block_timestamp_rfc3339: None,
         };
@@ -1174,13 +1046,23 @@ pub(crate) async fn process_chain(
 
     let historical_supply_pass = supply_start.is_some() && supply_end.is_some();
 
-    let (win_start_ts, win_end_ts) = if skip_rpc {
-        (None, None)
+    let (win_start_ts, win_end_ts, start_supply_block_ts) = if skip_rpc {
+        (None, None, None)
     } else {
-        (
-            block_window_timestamp_rfc3339(&provider, from_block).await,
-            block_window_timestamp_rfc3339(&provider, end_blk).await,
-        )
+        let win_start = block_window_timestamp_rfc3339(&provider, from_block).await;
+        let win_end = block_window_timestamp_rfc3339(&provider, end_blk).await;
+        let start_supply_ts = if supply_start.is_some() {
+            if start_minus_1 == 0 {
+                block_window_timestamp_rfc3339(&provider, 0).await
+            } else if supply_start_provenance == "on-chain" {
+                block_window_timestamp_rfc3339(&provider, start_minus_1).await
+            } else {
+                None
+            }
+        } else {
+            None
+        };
+        (win_start, win_end, start_supply_ts)
     };
 
     let params = FetchParams {
@@ -1220,6 +1102,7 @@ pub(crate) async fn process_chain(
                 effective_decimals,
                 &win_start_ts,
                 &win_end_ts,
+                start_supply_block_ts.clone(),
             );
             let qa = build_qa_chain(&supply, generated_at, &errors);
             return (empty_events, supply, qa, hard_error);
@@ -1288,6 +1171,7 @@ pub(crate) async fn process_chain(
             effective_decimals,
             &win_start_ts,
             &win_end_ts,
+            start_supply_block_ts.clone(),
         );
         let qa = build_qa_chain(&supply, generated_at, &errors);
         return (empty_events, supply, qa, true);
@@ -1396,6 +1280,7 @@ pub(crate) async fn process_chain(
                 effective_decimals,
                 &win_start_ts,
                 &win_end_ts,
+                start_supply_block_ts.clone(),
             );
             let qa = build_qa_chain(&supply, generated_at, &errors);
             return (empty_events, supply, qa, true);
@@ -1482,6 +1367,8 @@ pub(crate) async fn process_chain(
         total_supply_at_start_minus_1: supply_start.map(fmt_u256),
         total_supply_at_start_minus_1_provenance: supply_start_provenance.clone(),
         total_supply_at_end: supply_end.map(fmt_u256),
+        total_supply_start_raw: supply_start.map(|u| u.to_string()),
+        total_supply_end_raw: supply_end.map(|u| u.to_string()),
         onchain_delta_raw: onchain_delta_opt.map(|v| v.to_string()),
         discrepancy_raw: discrepancy_opt.map(|v| v.to_string()),
         metadata_call_pass,
@@ -1491,6 +1378,7 @@ pub(crate) async fn process_chain(
         supply_invariant_pass: invariant_pass,
         duplicate_count: dup_count,
         full_decode_error_count: decode_errors,
+        total_supply_start_block_timestamp_rfc3339: start_supply_block_ts,
         window_start_block_timestamp_rfc3339: win_start_ts,
         window_end_block_timestamp_rfc3339: win_end_ts,
     };
@@ -1516,6 +1404,7 @@ pub(crate) fn partial_supply_after_fetch_fail(
     effective_decimals: u8,
     win_start_ts: &Option<String>,
     win_end_ts: &Option<String>,
+    total_supply_start_block_timestamp_rfc3339: Option<String>,
 ) -> SupplyAuditRow {
     SupplyAuditRow {
         chain: chain.to_string(),
@@ -1538,6 +1427,8 @@ pub(crate) fn partial_supply_after_fetch_fail(
             .map(|u| format_token_amount(u, effective_decimals)),
         total_supply_at_start_minus_1_provenance: supply_start_provenance.to_string(),
         total_supply_at_end: supply_end.map(|u| format_token_amount(u, effective_decimals)),
+        total_supply_start_raw: supply_start.map(|u| u.to_string()),
+        total_supply_end_raw: supply_end.map(|u| u.to_string()),
         onchain_delta_raw: None,
         discrepancy_raw: None,
         metadata_call_pass,
@@ -1549,6 +1440,7 @@ pub(crate) fn partial_supply_after_fetch_fail(
         full_decode_error_count: 0,
         window_start_block_timestamp_rfc3339: win_start_ts.clone(),
         window_end_block_timestamp_rfc3339: win_end_ts.clone(),
+        total_supply_start_block_timestamp_rfc3339,
     }
 }
 
@@ -1578,6 +1470,8 @@ pub(crate) fn failed_supply_row(
         total_supply_at_start_minus_1: None,
         total_supply_at_start_minus_1_provenance: "skipped".into(),
         total_supply_at_end: None,
+        total_supply_start_raw: None,
+        total_supply_end_raw: None,
         onchain_delta_raw: None,
         discrepancy_raw: None,
         metadata_call_pass: false,
@@ -1587,6 +1481,7 @@ pub(crate) fn failed_supply_row(
         supply_invariant_pass: None,
         duplicate_count: 0,
         full_decode_error_count: 0,
+        total_supply_start_block_timestamp_rfc3339: None,
         window_start_block_timestamp_rfc3339: None,
         window_end_block_timestamp_rfc3339: None,
     }
@@ -1736,6 +1631,7 @@ They are **not** estimates of total token holders or a full holder reconstructio
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::audit::supply::compute_supply_invariant;
     use alloy::primitives::{I256, U256};
     use std::path::PathBuf;
 
@@ -1911,6 +1807,8 @@ mod tests {
             total_supply_at_start_minus_1: Some("1.000000".into()),
             total_supply_at_start_minus_1_provenance: "on-chain".into(),
             total_supply_at_end: Some("2.000000".into()),
+            total_supply_start_raw: Some("1000000".into()),
+            total_supply_end_raw: Some("2000000".into()),
             onchain_delta_raw: Some("1000".into()),
             discrepancy_raw: Some("0".into()),
             metadata_call_pass: true,
@@ -1920,6 +1818,7 @@ mod tests {
             supply_invariant_pass: Some(true),
             duplicate_count: 0,
             full_decode_error_count: 0,
+            total_supply_start_block_timestamp_rfc3339: None,
             window_start_block_timestamp_rfc3339: None,
             window_end_block_timestamp_rfc3339: None,
         };
@@ -1940,7 +1839,12 @@ mod tests {
         .unwrap();
         for f in [
             "decoded_transfers.csv",
+            "canonical_transfers.csv",
             "supply_audit.csv",
+            "supply_snapshots.csv",
+            "evidence_sources.json",
+            "deployment_registry.json",
+            "chain_windows.json",
             "supply_audit.md",
             "qa_report.json",
             "provenance.json",
@@ -2072,6 +1976,7 @@ mod tests {
             6,
             &None,
             &None,
+            None,
         );
         assert_eq!(row.resolved_to_block, Some(200));
         assert!(row.total_supply_at_end.is_some());
@@ -2123,6 +2028,8 @@ mod tests {
                 total_supply_at_start_minus_1: Some("1.000000".into()),
                 total_supply_at_start_minus_1_provenance: "on-chain".into(),
                 total_supply_at_end: Some("1.000000".into()),
+                total_supply_start_raw: Some("1000000".into()),
+                total_supply_end_raw: Some("1000000".into()),
                 onchain_delta_raw: Some("0".into()),
                 discrepancy_raw: Some("0".into()),
                 metadata_call_pass: true,
@@ -2132,6 +2039,7 @@ mod tests {
                 supply_invariant_pass: Some(true),
                 duplicate_count: 0,
                 full_decode_error_count: 0,
+                total_supply_start_block_timestamp_rfc3339: None,
                 window_start_block_timestamp_rfc3339: None,
                 window_end_block_timestamp_rfc3339: None,
             };
@@ -2255,6 +2163,8 @@ mod tests {
                 total_supply_at_start_minus_1: Some("1.000000".into()),
                 total_supply_at_start_minus_1_provenance: "on-chain".into(),
                 total_supply_at_end: Some("1.000000".into()),
+                total_supply_start_raw: Some("1000000".into()),
+                total_supply_end_raw: Some("1000000".into()),
                 onchain_delta_raw: Some("0".into()),
                 discrepancy_raw: Some("0".into()),
                 metadata_call_pass: true,
@@ -2264,6 +2174,7 @@ mod tests {
                 supply_invariant_pass: Some(true),
                 duplicate_count: 0,
                 full_decode_error_count: 0,
+                total_supply_start_block_timestamp_rfc3339: None,
                 window_start_block_timestamp_rfc3339: None,
                 window_end_block_timestamp_rfc3339: None,
             };

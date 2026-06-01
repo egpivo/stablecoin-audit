@@ -67,6 +67,8 @@ pub struct ArtifactRef {
     pub row_count: Option<u64>,
     pub checksum_sha256: Option<String>,
     pub description: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub schema: Option<String>,
 }
 
 #[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
@@ -79,6 +81,11 @@ pub enum ArtifactKind {
     Summary,
     CrossChainSummary,
     AuditPlan,
+    EvidenceSources,
+    DeploymentRegistry,
+    ChainWindows,
+    CanonicalTransfers,
+    SupplySnapshots,
     Checkpoint,
     Metadata,
     MapPackage,
@@ -179,6 +186,7 @@ mod tests {
             row_count: None,
             checksum_sha256: None,
             description: "QA gates".into(),
+            schema: None,
         };
         let v: serde_json::Value = serde_json::to_value(&artifact).unwrap();
         assert!(v["row_count"].is_null());

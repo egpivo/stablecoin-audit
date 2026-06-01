@@ -13,10 +13,17 @@ use super::audit_plan::{
 };
 use super::checksum::sha256_file_hex;
 use super::manifest::{
-    ArtifactFormat, ArtifactKind, ArtifactManifest, ArtifactRef, ClaimBoundary, ClaimStatus,
-    InputRef, SourceSnapshot, WorkflowStep, SCHEMA,
+    ArtifactFormat, ArtifactKind, ArtifactManifest, ArtifactRef, InputRef, SourceSnapshot,
+    WorkflowStep, SCHEMA,
 };
 use super::writer::write_manifest;
+use crate::audit::claims::{
+    instantiate_claims, transfer_audit_supported_claim_ids, transfer_audit_unsupported_claim_ids,
+};
+use crate::audit::contracts::{
+    CANONICAL_TRANSFERS_FILENAME, CHAIN_WINDOWS_FILENAME, DEPLOYMENT_REGISTRY_FILENAME,
+    EVIDENCE_SOURCES_FILENAME, SUPPLY_SNAPSHOTS_FILENAME,
+};
 
 const COMMAND: &str = "transfer-audit";
 
@@ -26,19 +33,6 @@ const REQUESTED_CHECKS: &[&str] = &[
     "mint_burn_aggregation",
     "supply_invariant_per_chain",
     "qa_gates",
-];
-
-const OUT_OF_SCOPE: &[&str] = &[
-    "reserve_adequacy",
-    "peg_stability",
-    "redemption_capacity",
-    "bridge_backing",
-    "user_geography",
-    "holder_identity",
-    "actual_swap_routing",
-    "issuer_intent",
-    "stress_transmission",
-    "circulating_supply_cross_chain",
 ];
 
 /// Per-chain window and source metadata for manifest construction.
@@ -113,6 +107,10 @@ pub fn build_transfer_audit_manifest(
     }
 
     let artifacts = collect_artifacts(out_dir)?;
+    let available: std::collections::HashSet<&str> =
+        artifacts.iter().map(|a| a.path.as_str()).collect();
+    let supported_claims = instantiate_claims(transfer_audit_supported_claim_ids(), &available);
+    let unsupported_claims = instantiate_claims(transfer_audit_unsupported_claim_ids(), &available);
     let source_snapshots = params
         .chains
         .iter()
@@ -124,9 +122,6 @@ pub fn build_transfer_audit_manifest(
             window_end: parse_optional_ts(c.window_end_rfc3339.as_deref()),
         })
         .collect();
-
-    let supported_claims = transfer_audit_supported_claims();
-    let unsupported_claims = transfer_audit_unsupported_claims();
     let step_artifacts: Vec<String> = artifacts.iter().map(|a| a.path.clone()).collect();
     let workflow_steps = vec![WorkflowStep {
         command: COMMAND.to_string(),
@@ -219,7 +214,10 @@ pub(crate) fn build_audit_plan(params: &TransferAuditManifestParams) -> AuditPla
             })
             .collect(),
         requested_checks: REQUESTED_CHECKS.iter().map(|s| (*s).to_string()).collect(),
-        out_of_scope: OUT_OF_SCOPE.iter().map(|s| (*s).to_string()).collect(),
+        out_of_scope: crate::audit::audit_plan_out_of_scope_ids()
+            .iter()
+            .map(|s| (*s).to_string())
+            .collect(),
         data_sources: params
             .chains
             .iter()
@@ -243,53 +241,95 @@ fn parse_optional_ts(s: Option<&str>) -> Option<DateTime<Utc>> {
 }
 
 fn collect_artifacts(out_dir: &Path) -> Result<Vec<ArtifactRef>> {
-    let candidates: &[(&str, ArtifactKind, ArtifactFormat, &str)] = &[
+    let candidates: &[(&str, ArtifactKind, ArtifactFormat, &str, Option<&str>)] = &[
         (
             AUDIT_PLAN_FILENAME,
             ArtifactKind::AuditPlan,
             ArtifactFormat::Json,
             "Declared audit scope, requested checks, and out-of-scope boundaries",
+            Some(AUDIT_PLAN_SCHEMA),
+        ),
+        (
+            EVIDENCE_SOURCES_FILENAME,
+            ArtifactKind::EvidenceSources,
+            ArtifactFormat::Json,
+            "Evidence source registry for this run",
+            Some(crate::audit::contracts::EVIDENCE_SOURCES_SCHEMA),
+        ),
+        (
+            DEPLOYMENT_REGISTRY_FILENAME,
+            ArtifactKind::DeploymentRegistry,
+            ArtifactFormat::Json,
+            "In-scope token deployments and evidence lineage",
+            Some(crate::audit::contracts::DEPLOYMENT_REGISTRY_SCHEMA),
+        ),
+        (
+            CHAIN_WINDOWS_FILENAME,
+            ArtifactKind::ChainWindows,
+            ArtifactFormat::Json,
+            "Per-chain audit block windows",
+            Some(crate::audit::contracts::CHAIN_WINDOWS_SCHEMA),
+        ),
+        (
+            CANONICAL_TRANSFERS_FILENAME,
+            ArtifactKind::CanonicalTransfers,
+            ArtifactFormat::Csv,
+            "Canonical transfer log table (preferred contract)",
+            Some(crate::audit::contracts::CANONICAL_TRANSFERS_SCHEMA),
+        ),
+        (
+            SUPPLY_SNAPSHOTS_FILENAME,
+            ArtifactKind::SupplySnapshots,
+            ArtifactFormat::Csv,
+            "Pinned totalSupply snapshots per chain",
+            Some(crate::audit::contracts::SUPPLY_SNAPSHOTS_SCHEMA),
         ),
         (
             "qa_report.json",
             ArtifactKind::QaReport,
             ArtifactFormat::Json,
             "Per-chain QA gates (PASS/FAIL)",
+            None,
         ),
         (
             "provenance.json",
             ArtifactKind::Provenance,
             ArtifactFormat::Json,
             "Per-chain block windows and contract addresses",
+            None,
         ),
         (
             "supply_audit.csv",
             ArtifactKind::SupplyAudit,
             ArtifactFormat::Csv,
             "Mint/burn aggregate vs totalSupply delta per chain",
+            None,
         ),
         (
             "supply_audit.md",
             ArtifactKind::SupplyAudit,
             ArtifactFormat::Markdown,
             "Human-readable supply invariant report",
+            None,
         ),
         (
             "summary.md",
             ArtifactKind::Summary,
             ArtifactFormat::Markdown,
             "Transfer-audit run summary",
+            None,
         ),
         (
             "decoded_transfers.csv",
             ArtifactKind::TransferLog,
             ArtifactFormat::Csv,
-            "Decoded Transfer events in window",
+            "Decoded Transfer events in window (legacy workflow output)",
+            None,
         ),
     ];
 
     let mut artifacts = Vec::new();
-    for (file, kind, format, description) in candidates {
+    for (file, kind, format, description, schema) in candidates {
         let path = out_dir.join(file);
         if path.is_file() {
             artifacts.push(ArtifactRef {
@@ -299,6 +339,7 @@ fn collect_artifacts(out_dir: &Path) -> Result<Vec<ArtifactRef>> {
                 row_count: csv_row_count_if_applicable(&path, *format),
                 checksum_sha256: Some(sha256_file_hex(&path)?),
                 description: (*description).to_string(),
+                schema: schema.map(str::to_string),
             });
         }
     }
@@ -322,65 +363,6 @@ pub(crate) fn csv_row_count_if_applicable(path: &Path, format: ArtifactFormat) -
     } else {
         Some(lines.saturating_sub(1))
     }
-}
-
-fn transfer_audit_supported_claims() -> Vec<ClaimBoundary> {
-    vec![
-        ClaimBoundary::new(
-            "transfer_activity_reconstructible",
-            ClaimStatus::Conditional,
-            "Transfer logs in the configured block window were fetched and decoded for the scoped deployment(s).",
-            vec!["decoded_transfers.csv".into(), "qa_report.json".into()],
-            vec![
-                "Holds only when RPC fetch and decode gates PASS for the configured asset, chain, and block window.".into(),
-                "Transfers are not labeled by actor type or intent.".into(),
-            ],
-            vec![],
-        ),
-        ClaimBoundary::new(
-            "supply_snapshot_available",
-            ClaimStatus::Conditional,
-            "Pinned totalSupply boundaries and mint/burn aggregates are available per chain for the audit window.",
-            vec![
-                "supply_audit.csv".into(),
-                "provenance.json".into(),
-                "qa_report.json".into(),
-            ],
-            vec![
-                "Compares pinned totalSupply deltas to mint/burn aggregates; FAIL is not proof of fraud.".into(),
-                "Mint/burn sums use toolkit Transfer definitions (zero-address mint/burn).".into(),
-            ],
-            vec![],
-        ),
-    ]
-}
-
-fn transfer_audit_unsupported_claims() -> Vec<ClaimBoundary> {
-    let mut claims = vec![ClaimBoundary::new(
-        "circulating_supply_not_verified",
-        ClaimStatus::Unsupported,
-        "Circulating supply across chains or through bridges is not verified by transfer-audit alone.",
-        vec![],
-        vec![
-            "Per-chain totalSupply(end) is not circulating supply when inventory is bridged or held in custody.".into(),
-            "Summing per-chain totals double-counts bridged inventory.".into(),
-        ],
-        vec![],
-    )];
-    for claim_id in OUT_OF_SCOPE {
-        if *claim_id == "circulating_supply_cross_chain" {
-            continue;
-        }
-        claims.push(ClaimBoundary::new(
-            *claim_id,
-            ClaimStatus::Unsupported,
-            format!("{claim_id} is out of scope for transfer-audit."),
-            vec![],
-            vec!["Out of scope for transfer-audit; not attested by this toolkit.".into()],
-            vec![],
-        ));
-    }
-    claims
 }
 
 #[cfg(test)]
@@ -410,6 +392,8 @@ mod tests {
         let mut w = std::fs::File::create(out.join("decoded_transfers.csv")).unwrap();
         writeln!(w, "chain,block_number").unwrap();
 
+        seed_canonical_stub_artifacts(&out);
+
         let params = TransferAuditManifestParams {
             asset: "USDC".into(),
             run_id: "run_manifest_test".into(),
@@ -431,6 +415,26 @@ mod tests {
         (out, params)
     }
 
+    fn seed_canonical_stub_artifacts(out: &std::path::Path) {
+        std::fs::write(
+            out.join(EVIDENCE_SOURCES_FILENAME),
+            r#"{"schema":"evidence-sources-v0","sources":[]}"#,
+        )
+        .unwrap();
+        std::fs::write(
+            out.join(DEPLOYMENT_REGISTRY_FILENAME),
+            r#"{"schema":"deployment-registry-v0","asset":"USDC","run_id":"run_manifest_test","deployments":[]}"#,
+        )
+        .unwrap();
+        std::fs::write(
+            out.join(CHAIN_WINDOWS_FILENAME),
+            r#"{"schema":"chain-windows-v0","asset":"USDC","run_id":"run_manifest_test","windows":[]}"#,
+        )
+        .unwrap();
+        std::fs::write(out.join(CANONICAL_TRANSFERS_FILENAME), "chain,chain_id\n").unwrap();
+        std::fs::write(out.join(SUPPLY_SNAPSHOTS_FILENAME), "chain,chain_id\n").unwrap();
+    }
+
     #[test]
     fn build_and_roundtrip_json() {
         let (out, params) = minimal_out_dir("roundtrip");
@@ -441,7 +445,7 @@ mod tests {
         assert_eq!(back.run_id.as_deref(), Some("run_manifest_test"));
         assert_eq!(back.asset.as_deref(), Some("USDC"));
         assert!(!back.artifacts.is_empty());
-        assert_eq!(back.supported_claims.len(), 2);
+        assert_eq!(back.supported_claims.len(), 3);
         assert!(back
             .unsupported_claims
             .iter()
@@ -455,6 +459,29 @@ mod tests {
         write_transfer_audit_manifest(&out, &params).unwrap();
         assert!(out.join(super::super::writer::MANIFEST_FILENAME).is_file());
         assert!(out.join(AUDIT_PLAN_FILENAME).is_file());
+        let _ = std::fs::remove_dir_all(&out);
+    }
+
+    #[test]
+    fn manifest_includes_canonical_artifacts_with_checksums() {
+        let (out, params) = minimal_out_dir("canonical_manifest");
+        write_transfer_audit_manifest(&out, &params).unwrap();
+        let manifest = super::super::writer::load_artifact_manifest(&out).unwrap();
+        for path in [
+            EVIDENCE_SOURCES_FILENAME,
+            DEPLOYMENT_REGISTRY_FILENAME,
+            CHAIN_WINDOWS_FILENAME,
+            CANONICAL_TRANSFERS_FILENAME,
+            SUPPLY_SNAPSHOTS_FILENAME,
+        ] {
+            let artifact = manifest
+                .artifacts
+                .iter()
+                .find(|a| a.path == path)
+                .unwrap_or_else(|| panic!("missing manifest artifact {path}"));
+            assert!(artifact.checksum_sha256.is_some());
+            assert!(artifact.schema.is_some());
+        }
         let _ = std::fs::remove_dir_all(&out);
     }
 

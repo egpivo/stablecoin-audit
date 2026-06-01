@@ -7,11 +7,12 @@ use anyhow::{Context, Result};
 use chrono::{DateTime, Utc};
 
 use super::checksum::sha256_file_hex;
-use super::manifest::{
-    ArtifactFormat, ArtifactKind, ArtifactRef, ClaimBoundary, ClaimStatus, WorkflowStep,
-};
+use super::manifest::{ArtifactFormat, ArtifactKind, ArtifactRef, ClaimBoundary, WorkflowStep};
 use super::transfer_audit_manifest::csv_row_count_if_applicable;
 use super::writer::{load_artifact_manifest, write_manifest, MANIFEST_FILENAME};
+use crate::audit::claims::{
+    cross_chain_supported_claim_ids, cross_chain_unsupported_claim_ids, instantiate_claims,
+};
 
 const COMMAND: &str = "cross-chain-summary";
 
@@ -57,8 +58,8 @@ pub fn upsert_cross_chain_summary_manifest(
     };
     upsert_workflow_step(&mut manifest.workflow_steps, step);
 
-    merge_cross_chain_claims(&mut manifest.supported_claims);
-    merge_cross_chain_unsupported_claims(&mut manifest.unsupported_claims);
+    merge_cross_chain_claims(&mut manifest.supported_claims, &manifest.artifacts);
+    merge_cross_chain_unsupported_claims(&mut manifest.unsupported_claims, &manifest.artifacts);
     merge_top_level_warnings(&mut manifest.warnings, &params.warnings);
     manifest.generated_at = completed_at;
 
@@ -96,6 +97,7 @@ fn collect_cross_chain_artifacts(out_dir: &Path) -> Result<Vec<ArtifactRef>> {
                 row_count: csv_row_count_if_applicable(&path, *format),
                 checksum_sha256: Some(sha256_file_hex(&path)?),
                 description: (*description).to_string(),
+                schema: None,
             });
         }
     }
@@ -120,12 +122,23 @@ fn upsert_workflow_step(steps: &mut Vec<WorkflowStep>, step: WorkflowStep) {
     }
 }
 
-fn merge_cross_chain_claims(supported: &mut Vec<ClaimBoundary>) {
-    upsert_claims(supported, cross_chain_supported_claims());
+fn merge_cross_chain_claims(supported: &mut Vec<ClaimBoundary>, artifacts: &[ArtifactRef]) {
+    let available: HashSet<&str> = artifacts.iter().map(|a| a.path.as_str()).collect();
+    upsert_claims(
+        supported,
+        instantiate_claims(cross_chain_supported_claim_ids(), &available),
+    );
 }
 
-fn merge_cross_chain_unsupported_claims(unsupported: &mut Vec<ClaimBoundary>) {
-    upsert_claims(unsupported, cross_chain_unsupported_claims());
+fn merge_cross_chain_unsupported_claims(
+    unsupported: &mut Vec<ClaimBoundary>,
+    artifacts: &[ArtifactRef],
+) {
+    let available: HashSet<&str> = artifacts.iter().map(|a| a.path.as_str()).collect();
+    upsert_claims(
+        unsupported,
+        instantiate_claims(cross_chain_unsupported_claim_ids(), &available),
+    );
 }
 
 fn upsert_claims(target: &mut Vec<ClaimBoundary>, updates: Vec<ClaimBoundary>) {
@@ -145,47 +158,6 @@ fn merge_top_level_warnings(warnings: &mut Vec<String>, step_warnings: &[String]
             warnings.push(w.clone());
         }
     }
-}
-
-fn cross_chain_supported_claims() -> Vec<ClaimBoundary> {
-    vec![
-        ClaimBoundary::new(
-            "cross_chain_per_deployment_comparison",
-            ClaimStatus::Conditional,
-            "Per-deployment transfer-audit metrics are rolled up for cross-chain comparison on one asset schema.",
-            vec![
-                "cross_chain_summary.json".into(),
-                "supply_audit.csv".into(),
-            ],
-            vec![
-                "Compares per-chain deployments on one schema; bridged inventory double-counts if summed as circulating supply.".into(),
-            ],
-            vec![],
-        ),
-        ClaimBoundary::new(
-            "per_chain_totalSupply_not_circulating_supply",
-            ClaimStatus::Conditional,
-            "Per-chain totalSupply(end) values are reported separately and must not be read as consolidated circulating supply.",
-            vec!["cross_chain_summary.json".into(), "supply_audit.csv".into()],
-            vec![
-                "Summing per-chain totalSupply(end) double-counts bridged or custodied inventory.".into(),
-            ],
-            vec![],
-        ),
-    ]
-}
-
-fn cross_chain_unsupported_claims() -> Vec<ClaimBoundary> {
-    vec![ClaimBoundary::new(
-        "bridge_backing_not_verified_without_bridge_collateral",
-        ClaimStatus::Unsupported,
-        "Bridge collateral, mint authority, and reserve backing are not verified without bridge-specific collateral evidence.",
-        vec![],
-        vec![
-            "Cross-chain summary compares on-chain totals only; bridge attestations and reserve data are out of scope.".into(),
-        ],
-        vec![],
-    )]
 }
 
 #[cfg(test)]

@@ -1,5 +1,6 @@
 pub mod application;
 pub mod artifact;
+pub mod audit;
 pub mod cli;
 pub mod config;
 pub mod decode;
