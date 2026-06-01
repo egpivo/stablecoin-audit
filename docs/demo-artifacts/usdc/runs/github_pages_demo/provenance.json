@@ -1,0 +1,19 @@
+{
+  "schema": "transfer-audit-provenance-v1",
+  "asset": "USDC",
+  "run_id": "github_pages_demo",
+  "generated_at": "2026-06-01T11:38:57.375048+00:00",
+  "per_chain_spans": true,
+  "chains": [
+    {
+      "chain": "ethereum",
+      "chain_id": 1,
+      "contract_address": "0xA0b86991c6218b36c1d19D4a2e9Eb0cE3606eB48",
+      "from_block": 24000000,
+      "to_block_requested": "24000100",
+      "resolved_to_block": 24000100,
+      "window_start_block_timestamp_rfc3339": "2025-12-13T00:06:11Z",
+      "window_end_block_timestamp_rfc3339": "2025-12-13T00:26:11Z"
+    }
+  ]
+}

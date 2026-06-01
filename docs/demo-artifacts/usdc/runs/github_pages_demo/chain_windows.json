@@ -1,0 +1,18 @@
+{
+  "schema": "chain-windows-v0",
+  "asset": "USDC",
+  "run_id": "github_pages_demo",
+  "windows": [
+    {
+      "chain": "ethereum",
+      "chain_id": 1,
+      "start_block": 24000000,
+      "end_block": 24000100,
+      "start_timestamp": "2025-12-13T00:06:11Z",
+      "end_timestamp": "2025-12-13T00:26:11Z",
+      "evidence_source_ids": [
+        "article_ui_demo:rpc:ethereum:transfer_logs"
+      ]
+    }
+  ]
+}

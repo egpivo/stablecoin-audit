@@ -106,3 +106,14 @@ open http://127.0.0.1:8080/ui/
 ```
 
 Details: [`docs/product/evidence_browser_v0.md`](docs/product/evidence_browser_v0.md).
+
+### GitHub Pages demo (read-only)
+
+A **static public demo** uses dummy run id `github_pages_demo` and recorded artifacts under `docs/demo-artifacts/` (no RPC, no new audits). Regenerate after changing the UI or demo bundle:
+
+```bash
+python3 scripts/export_github_pages_demo.py
+# requires a completed run under out/usdc/runs/ (default source: article_ui_demo)
+```
+
+Enable **Settings → Pages → Deploy from branch `main`, folder `/docs`**. Open `https://<org>.github.io/stablecoin-audit/ui/`. See [`docs/GITHUB_PAGES.md`](docs/GITHUB_PAGES.md).

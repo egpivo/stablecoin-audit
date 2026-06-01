@@ -1,0 +1,342 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Stablecoin Audit — Evidence Toolkit</title>
+  <link rel="stylesheet" href="style.css">
+</head>
+<body>
+  <section id="view-landing" class="view-landing" aria-label="Product introduction">
+    <header class="landing-header">
+      <div class="landing-brand">
+        <span class="mode-badge mode-badge-landing">Local mode</span>
+      </div>
+      <h1 class="landing-title">Stablecoin Audit</h1>
+      <p class="landing-subtitle">A reproducible evidence toolkit for stablecoin transfer and supply audits</p>
+    </header>
+
+    <div class="landing-body">
+      <p class="landing-lead">
+        This tool runs bounded stablecoin audit workflows over configured EVM deployments and block windows.
+        It produces canonical artifacts, an artifact manifest, execution logs, claim boundaries, and a downloadable
+        evidence bundle.
+      </p>
+
+      <div class="landing-cards">
+        <article class="landing-card">
+          <span class="landing-card-num">1</span>
+          <h2>Run local audit</h2>
+          <p>Select asset, chain, and block window. Uses your local RPC environment and produces new artifacts.</p>
+        </article>
+        <article class="landing-card">
+          <span class="landing-card-num">2</span>
+          <h2>Inspect evidence</h2>
+          <p>View completed runs, check supported and unsupported claims, and read execution logs.</p>
+        </article>
+        <article class="landing-card">
+          <span class="landing-card-num">3</span>
+          <h2>Build evidence bundle</h2>
+          <p>Package manifest, artifacts, logs, and checksums. Download and verify offline.</p>
+        </article>
+      </div>
+
+      <div class="landing-cta">
+        <button type="button" class="btn btn-primary btn-lg" id="btn-landing-start-audit">Start local audit</button>
+        <button type="button" class="btn btn-secondary btn-lg" id="btn-landing-open-console">Open evidence console</button>
+        <button type="button" class="btn btn-ghost" id="btn-landing-load-demo">Load demo run</button>
+      </div>
+
+      <p class="landing-scope" role="note">
+        <strong>v0 scope:</strong> transfer reconstruction, supply snapshots, and supply reconciliation.
+        It does not verify reserves, peg stability, redemption capacity, user geography, issuer intent, or actual swap routing.
+      </p>
+    </div>
+
+    <footer class="landing-footer">
+      <span id="landing-health-status">Checking API…</span>
+    </footer>
+  </section>
+
+  <div id="view-console" class="view-console" hidden>
+  <header class="app-header">
+    <div class="app-header-row">
+      <div class="app-brand">
+        <button type="button" class="btn-link btn-home" id="btn-back-landing">← Home</button>
+        <h1>Evidence Console</h1>
+        <p class="tagline">Reproducible stablecoin audit evidence</p>
+      </div>
+      <div class="app-header-actions">
+        <span id="mode-badge" class="mode-badge">LOCAL MODE</span>
+        <button type="button" class="btn btn-ghost btn-sm" id="btn-clean-history" title="Remove local demo runs under artifact root">Clean local history</button>
+        <button type="button" class="btn btn-primary" id="btn-open-audit-modal">Start local audit</button>
+      </div>
+    </div>
+    <div class="header-meta">
+      <p class="info-pill" role="note">
+        Displays generated audit evidence from <code>artifact_manifest.json</code>. Does not create new claims.
+      </p>
+      <p class="scope-note" role="note">
+        Out of scope: reserves, peg stability, redemption, geography, issuer intent, swap routing.
+      </p>
+    </div>
+  </header>
+
+  <div class="app-layout">
+    <aside class="sidebar" aria-label="Audit runs">
+      <label class="run-filter-label">
+        <span class="visually-hidden">Filter runs</span>
+        <input id="run-filter" type="search" placeholder="Filter asset or run_id…" autocomplete="off" />
+      </label>
+      <div id="run-list-status" class="sidebar-status">Loading runs…</div>
+      <ul id="run-list" class="run-list"></ul>
+      <div id="sidebar-empty" class="sidebar-empty" hidden>
+        <p>No completed runs yet.</p>
+        <button type="button" class="btn btn-primary btn-block" id="btn-sidebar-new-audit">
+          Start local audit
+        </button>
+      </div>
+    </aside>
+
+    <main class="console" id="console-main">
+      <div id="empty-state" class="empty-state">
+        <div class="empty-state-card">
+          <h2>Start a local audit</h2>
+          <p>
+            Select asset, chain, and block window — then run transfer-audit on this machine.
+            Completed runs appear in the sidebar after <code>artifact_manifest.json</code> is written.
+          </p>
+          <div class="empty-actions">
+            <button type="button" class="btn btn-primary btn-lg" id="btn-empty-new-audit">Start local audit</button>
+            <button type="button" class="btn btn-secondary" id="btn-empty-back-landing">Back to home</button>
+          </div>
+          <details class="collapsible empty-advanced">
+            <summary>Advanced: view CLI example</summary>
+            <pre class="cli-preview cli-preview-inline" id="empty-cli-example"></pre>
+            <button type="button" class="btn btn-ghost btn-sm" id="btn-empty-copy-cli">Copy example command</button>
+          </details>
+          <p class="arch-strip" aria-label="Architecture">
+            Rust CLI → artifacts → <code>artifact_manifest.json</code> → API → evidence console
+          </p>
+        </div>
+      </div>
+
+      <div id="run-detail" class="run-detail" hidden>
+        <header class="run-header" id="run-header"></header>
+
+        <div id="metric-cards" class="metric-cards" aria-label="Run metrics"></div>
+
+        <nav class="tab-bar" role="tablist" aria-label="Run sections">
+          <button type="button" class="tab active" role="tab" data-tab="overview" aria-selected="true">Overview</button>
+          <button type="button" class="tab" role="tab" data-tab="claims" aria-selected="false">Claims</button>
+          <button type="button" class="tab" role="tab" data-tab="logs" aria-selected="false">Logs</button>
+          <button type="button" class="tab" role="tab" data-tab="artifacts" aria-selected="false">Artifacts</button>
+          <button type="button" class="tab" role="tab" data-tab="package" aria-selected="false">Bundle</button>
+        </nav>
+
+        <div class="tab-panels">
+          <section class="tab-panel active" id="tab-overview" role="tabpanel">
+            <div id="overview-summary-cards" class="summary-cards"></div>
+            <div class="overview-grid">
+              <div class="panel panel-compact">
+                <h3>Claim boundaries (preview)</h3>
+                <div id="claims-compact"></div>
+              </div>
+              <div class="panel panel-compact">
+                <h3>Latest execution trace</h3>
+                <div id="overview-log-preview" class="terminal-log terminal-compact" role="log"></div>
+              </div>
+            </div>
+            <div class="panel panel-compact" id="overview-package-strip"></div>
+          </section>
+
+          <section class="tab-panel" id="tab-claims" role="tabpanel" hidden>
+            <div id="claims-tab-body"></div>
+            <details class="collapsible" id="claims-full-details">
+              <summary>Show full claim catalog</summary>
+              <div class="claims-grid">
+                <div class="claims-column supported">
+                  <h3>Supported / conditional</h3>
+                  <div id="supported-claims"></div>
+                </div>
+                <div class="claims-column unsupported">
+                  <h3>Unsupported (out of scope)</h3>
+                  <div id="unsupported-claims"></div>
+                </div>
+              </div>
+            </details>
+          </section>
+
+          <section class="tab-panel" id="tab-logs" role="tabpanel" hidden>
+            <p class="panel-sub">Execution trace from <code>execution_log.ndjson</code> when listed in the manifest, or live output during a local run.</p>
+            <div id="evidence-execution-log" class="terminal-log" role="log" aria-live="polite"></div>
+            <div id="local-run-status" class="local-run-banner" hidden></div>
+          </section>
+
+          <section class="tab-panel" id="tab-artifacts" role="tabpanel" hidden>
+            <p class="panel-sub artifacts-panel-lead">
+              Each row is a piece of audit evidence from this run. Expand a row for filenames, paths, and manifest JSON.
+            </p>
+            <div class="artifact-filters" id="artifact-filters">
+              <button type="button" class="filter-chip active" data-filter="all">All</button>
+              <button type="button" class="filter-chip" data-filter="canonical">Canonical</button>
+              <button type="button" class="filter-chip" data-filter="qa">QA</button>
+              <button type="button" class="filter-chip" data-filter="provenance">Provenance</button>
+              <button type="button" class="filter-chip" data-filter="logs">Logs</button>
+              <button type="button" class="filter-chip" data-filter="manifest">Manifest</button>
+              <button type="button" class="filter-chip" data-filter="package">Bundle</button>
+            </div>
+            <div id="artifacts-status" class="panel-status"></div>
+            <div class="table-wrap">
+              <table id="artifacts-table" class="artifacts-evidence-table">
+                <thead>
+                  <tr>
+                    <th>Evidence</th>
+                    <th>Description</th>
+                    <th>Format</th>
+                    <th>Rows</th>
+                    <th>Checksum</th>
+                    <th>Action</th>
+                  </tr>
+                </thead>
+                <tbody id="artifacts-body"></tbody>
+              </table>
+            </div>
+          </section>
+
+          <section class="tab-panel" id="tab-package" role="tabpanel" hidden>
+            <header class="bundle-tab-header">
+              <h2 class="bundle-tab-title">Evidence Bundle</h2>
+              <p class="bundle-tab-lead">
+                An Evidence Bundle is a portable zip containing the manifest, canonical artifacts, QA reports,
+                provenance, execution logs, and checksums for offline review.
+              </p>
+              <p class="bundle-tab-note">
+                Delivery only — bundles existing run artifacts. It does not create new claims or run audit logic.
+              </p>
+            </header>
+            <div id="bundle-verify-alert-slot"></div>
+            <div id="package-content"></div>
+            <div class="btn-row bundle-tab-actions">
+              <button type="button" class="btn btn-primary" id="btn-build-package" disabled>Build bundle</button>
+              <button type="button" class="btn btn-secondary" id="btn-download-package" disabled>Download zip</button>
+              <button type="button" class="btn btn-secondary" id="btn-verify-package" disabled>Verify bundle</button>
+            </div>
+            <p id="bundle-action-hint" class="bundle-action-hint" hidden>Build the bundle first.</p>
+            <details class="collapsible bundle-json-advanced" id="package-json-details">
+              <summary>Advanced: show bundle manifest JSON</summary>
+              <pre id="package-result" class="json-preview">No bundle manifest JSON loaded yet.</pre>
+            </details>
+          </section>
+        </div>
+      </div>
+    </main>
+  </div>
+
+  <footer class="app-footer">
+    <span id="health-status">Checking API…</span>
+  </footer>
+  </div>
+
+  <div id="clean-modal" class="modal" hidden aria-hidden="true">
+    <div class="modal-backdrop" id="clean-modal-backdrop"></div>
+    <div class="modal-panel" role="dialog" aria-labelledby="clean-modal-title" aria-modal="true">
+      <header class="modal-header">
+        <h2 id="clean-modal-title">Clean local demo runs?</h2>
+        <button type="button" class="modal-close" id="btn-clean-modal-close" aria-label="Close">×</button>
+      </header>
+      <p class="clean-modal-text">
+        This removes local demo run entries under the configured artifact root (runs with
+        <code>artifact_manifest.json</code>). It does not affect external data or RPC providers.
+      </p>
+      <p id="clean-modal-status" class="form-hint" aria-live="polite"></p>
+      <footer class="modal-footer">
+        <button type="button" class="btn btn-secondary" id="btn-clean-cancel">Cancel</button>
+        <button type="button" class="btn btn-primary" id="btn-clean-confirm">Clean demo history</button>
+      </footer>
+    </div>
+  </div>
+
+  <div id="audit-modal" class="modal" hidden aria-hidden="true">
+    <div class="modal-backdrop" id="modal-backdrop"></div>
+    <div class="modal-panel modal-panel-wide" role="dialog" aria-labelledby="modal-title" aria-modal="true">
+      <header class="modal-header">
+        <h2 id="modal-title">Run audit locally</h2>
+        <button type="button" class="modal-close" id="btn-modal-close" aria-label="Close">×</button>
+      </header>
+      <p class="local-audit-note">
+        Uses your local RPC environment (<code>.env</code>). Public demos should use recorded artifacts unless auth and quotas are configured.
+      </p>
+      <div class="request-builder-grid">
+        <label>
+          <span>Asset</span>
+          <select id="req-asset"></select>
+        </label>
+        <label>
+          <span>Chain</span>
+          <select id="req-chain"></select>
+        </label>
+        <label>
+          <span>from_block</span>
+          <input id="req-from-block" type="number" min="1" step="1" placeholder="24000000" />
+        </label>
+        <label>
+          <span>to_block</span>
+          <input id="req-to-block" type="number" min="0" step="1" placeholder="24001000" />
+        </label>
+        <label class="span-2">
+          <span>run_id</span>
+          <input id="req-run-id" type="text" placeholder="demo_001" />
+        </label>
+        <label class="checkbox-label span-2">
+          <input id="req-fresh" type="checkbox" />
+          <span>Replace existing run directory (<code>--fresh</code>)</span>
+        </label>
+      </div>
+      <div id="request-builder-message" class="form-hint" aria-live="polite"></div>
+
+      <div id="run-progress-panel" class="run-progress-panel" hidden>
+        <div class="run-progress-header">
+          <span id="run-progress-status-label" class="run-progress-status">Running</span>
+          <span id="run-progress-elapsed" class="run-progress-elapsed"></span>
+        </div>
+        <div class="progress-bar-track" aria-hidden="true">
+          <div id="run-progress-bar" class="progress-bar-fill indeterminate"></div>
+        </div>
+        <p id="run-progress-current-stage" class="run-progress-current-stage" hidden></p>
+        <ol id="run-progress-steps" class="run-progress-steps" hidden></ol>
+      </div>
+
+      <div id="run-execution-panel" class="run-execution-panel" hidden>
+        <h3 class="execution-panel-title">Live execution trace</h3>
+        <pre id="run-execution-log" class="terminal-log execution-log-view" aria-label="Local run execution log"></pre>
+      </div>
+
+      <details class="collapsible modal-advanced" id="modal-cli-details">
+        <summary>Advanced: CLI equivalent</summary>
+        <pre id="request-builder-command" class="cli-preview" aria-label="Generated CLI command"></pre>
+        <button type="button" class="btn btn-ghost btn-sm" id="btn-copy-request-command" disabled>Copy CLI command</button>
+      </details>
+
+      <footer class="modal-footer">
+        <button type="button" class="btn btn-secondary" id="btn-modal-cancel">Cancel</button>
+        <button type="button" class="btn btn-primary btn-lg" id="btn-run-local-audit" disabled>
+          <span class="btn-label">Run audit locally</span>
+          <span class="btn-spinner" hidden aria-hidden="true"></span>
+        </button>
+      </footer>
+    </div>
+  </div>
+
+  <script>
+    window.STABLECOIN_AUDIT_DEMO = {
+      enabled: true,
+      label: "GitHub Pages demo",
+      readOnlyMessage: "This public demo is read-only. Run audits locally with the Rust CLI.",
+      defaultRun: { asset: "USDC", run_id: "github_pages_demo" }
+    };
+  </script>
+  <script src="demo-mode.js"></script>
+  <script src="app.js" type="module"></script>
+</body>
+</html>

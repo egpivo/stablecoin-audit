@@ -1,0 +1,87 @@
+{
+  "entries": [
+    {
+      "schema": "execution-log-v0",
+      "timestamp": "2026-06-01T11:38:57.374741+00:00",
+      "level": "info",
+      "message": "starting transfer-audit asset=USDC run_id=github_pages_demo window=ethereum:24000000:24000100 fresh=false",
+      "event": "audit_start",
+      "stage": "preparing"
+    },
+    {
+      "schema": "execution-log-v0",
+      "timestamp": "2026-06-01T11:38:59.373493+00:00",
+      "level": "info",
+      "message": "fetching Transfer logs block 24000000 \u2192 24000100 (chunk 500, 1 chunks)",
+      "chain": "ethereum",
+      "event": "chain_fetch_start",
+      "stage": "fetching_logs"
+    },
+    {
+      "schema": "execution-log-v0",
+      "timestamp": "2026-06-01T11:39:00.185747+00:00",
+      "level": "info",
+      "message": "fetch chunk 1/1 blocks 24000000..24000100 (4209 logs)",
+      "chain": "ethereum",
+      "event": "fetch_chunk_complete",
+      "stage": "fetching_logs"
+    },
+    {
+      "schema": "execution-log-v0",
+      "timestamp": "2026-06-01T11:39:00.231648+00:00",
+      "level": "info",
+      "message": "received 4209 raw logs (4209 decoded rows before dedup)",
+      "chain": "ethereum",
+      "event": "decode_complete",
+      "stage": "decoding_dedup"
+    },
+    {
+      "schema": "execution-log-v0",
+      "timestamp": "2026-06-01T11:39:00.259296+00:00",
+      "level": "info",
+      "message": "4209 logs \u2192 4209 unique (dup: 0)",
+      "chain": "ethereum",
+      "event": "dedup_complete",
+      "stage": "decoding_dedup"
+    },
+    {
+      "schema": "execution-log-v0",
+      "timestamp": "2026-06-01T11:39:00.259367+00:00",
+      "level": "pass",
+      "message": "supply_invariant: [PASS] (no_dup: [PASS], all_decode: [PASS])",
+      "chain": "ethereum",
+      "event": "qa_gate_result",
+      "stage": "checking_supply"
+    },
+    {
+      "schema": "execution-log-v0",
+      "timestamp": "2026-06-01T11:39:00.275809+00:00",
+      "level": "info",
+      "message": "writing run artifacts (CSV, QA report, provenance)",
+      "event": "artifacts_written",
+      "stage": "writing_artifacts"
+    },
+    {
+      "schema": "execution-log-v0",
+      "timestamp": "2026-06-01T11:39:00.454463+00:00",
+      "level": "info",
+      "message": "artifact_manifest.json written",
+      "event": "manifest_written",
+      "stage": "writing_manifest"
+    },
+    {
+      "schema": "execution-log-v0",
+      "timestamp": "2026-06-01T11:39:00.456809+00:00",
+      "level": "info",
+      "message": "transfer-audit completed successfully",
+      "event": "audit_complete",
+      "stage": "complete"
+    },
+    {
+      "schema": "execution-log-v0",
+      "timestamp": "2026-06-01T11:39:00.456882+00:00",
+      "level": "warn",
+      "message": "manifest execution_log upsert: read out/usdc/runs/github_pages_demo/artifact_manifest.json/artifact_manifest.json: Not a directory (os error 20)"
+    }
+  ]
+}
