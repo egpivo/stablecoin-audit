@@ -1786,6 +1786,11 @@ async function loadRuns(selectAsset = null, selectRunId = null) {
   } catch (err) {
     runListStatusEl.textContent = `Failed to load runs: ${err.message}`;
     runListStatusEl.classList.add("error");
+    if (window.STABLECOIN_AUDIT_DEMO?.enabled && typeof window.showGithubPagesDemoLoadError === "function") {
+      window.showGithubPagesDemoLoadError(err.message);
+    } else {
+      showRunDetail(false);
+    }
   }
 }
 
@@ -2070,7 +2075,8 @@ if (window.STABLECOIN_AUDIT_DEMO?.enabled) {
   if (typeof window.applyGithubPagesDemoChrome === "function") {
     window.applyGithubPagesDemoChrome();
   }
-  showConsoleView();
+  const dr = window.STABLECOIN_AUDIT_DEMO.defaultRun || {};
+  showConsoleView({ selectAsset: dr.asset || "USDC", selectRunId: dr.run_id || "github_pages_demo" });
 } else {
   routeFromHash();
 }

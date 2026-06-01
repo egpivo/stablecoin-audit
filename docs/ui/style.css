@@ -45,6 +45,11 @@
   font-size: 0.85em;
 }
 
+.demo-error-card .error {
+  color: var(--fail);
+  font-weight: 500;
+}
+
 body {
   margin: 0;
   font-family: var(--sans);

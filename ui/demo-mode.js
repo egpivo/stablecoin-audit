@@ -1,25 +1,13 @@
 /**
- * GitHub Pages read-only demo: static JSON under /demo-api and /demo-artifacts.
- * Enabled via window.STABLECOIN_AUDIT_DEMO in index.html (injected by export script).
+ * GitHub Pages read-only demo: static JSON under ../demo-api and ../demo-artifacts.
  */
 (function () {
   const cfg = window.STABLECOIN_AUDIT_DEMO;
   if (!cfg?.enabled) return;
 
-  function siteBasePath() {
-    const path = window.location.pathname;
-    const ui = path.indexOf("/ui/");
-    if (ui >= 0) return path.slice(0, ui + 1);
-    if (path.endsWith("/ui")) return path.slice(0, -2) || "/";
-    return "/";
-  }
-
-  function apiRoot() {
-    return `${siteBasePath()}demo-api`;
-  }
-
-  function artifactsRoot() {
-    return `${siteBasePath()}demo-artifacts`;
+  /** Resolve paths relative to the current UI page (works with /repo/ui and /repo/ui/). */
+  function demoUrl(relativePath) {
+    return new URL(relativePath, window.location.href).href;
   }
 
   function parseAssetQuery(path) {
@@ -32,7 +20,7 @@
   async function fetchJson(url) {
     const res = await fetch(url);
     if (!res.ok) {
-      const err = new Error(res.statusText || `HTTP ${res.status}`);
+      const err = new Error(`Demo bundle not found (${res.status})`);
       err.status = res.status;
       throw err;
     }
@@ -44,21 +32,20 @@
     if (method !== "GET") {
       const err = new Error(
         cfg.readOnlyMessage ||
-          "GitHub Pages demo is read-only. Clone the repo and run audits locally."
+          "This public demo is read-only. Run audits locally with the Rust CLI."
       );
       err.status = 405;
       throw err;
     }
 
     const { asset, pathOnly } = parseAssetQuery(path);
-    const root = apiRoot();
 
     if (pathOnly === "/health" || pathOnly === "/api/health") {
-      return fetchJson(`${root}/health.json`);
+      return fetchJson(demoUrl("../demo-api/health.json"));
     }
 
     if (pathOnly === "/api/runs") {
-      return fetchJson(`${root}/runs.json`);
+      return fetchJson(demoUrl("../demo-api/runs.json"));
     }
 
     const runMatch = pathOnly.match(/^\/api\/runs\/([^/]+)\/(manifest|artifacts|status|logs)$/);
@@ -66,16 +53,16 @@
       const runId = decodeURIComponent(runMatch[1]);
       const kind = runMatch[2];
       const assetDir = (asset || cfg.defaultRun?.asset || "USDC").toLowerCase();
-      return fetchJson(`${root}/${assetDir}/${runId}/${kind}.json`);
+      return fetchJson(demoUrl(`../demo-api/${assetDir}/${runId}/${kind}.json`));
     }
 
     const artMatch = pathOnly.match(/^\/api\/artifacts\/(.+)$/);
     if (artMatch) {
       const rel = decodeURIComponent(artMatch[1]);
-      const url = `${artifactsRoot()}/${rel}`;
+      const url = demoUrl(`../demo-artifacts/${rel}`);
       const res = await fetch(url);
       if (!res.ok) {
-        const err = new Error("Artifact not included in GitHub Pages demo bundle.");
+        const err = new Error("Artifact not included in this GitHub Pages demo bundle.");
         err.status = res.status;
         throw err;
       }
@@ -90,7 +77,7 @@
       throw err;
     }
 
-    const err = new Error(`Demo API: no static handler for ${pathOnly}`);
+    const err = new Error(`Demo API: no handler for ${pathOnly}`);
     err.status = 404;
     throw err;
   };
@@ -106,11 +93,11 @@
     banner.setAttribute("role", "note");
     banner.innerHTML = `
       <strong>${label}</strong> — read-only snapshot (<code>run_id=github_pages_demo</code>).
-      Transfer tables are omitted from this bundle. Run full audits locally with the Rust CLI.
+      Large transfer CSVs are omitted from this bundle. Clone the repo to run full audits locally.
     `;
     document.body.prepend(banner);
 
-    const hide = [
+    [
       "btn-open-audit-modal",
       "btn-clean-history",
       "btn-landing-start-audit",
@@ -118,15 +105,34 @@
       "btn-empty-new-audit",
       "btn-clean-confirm",
       "btn-run-local-audit",
-    ];
-    hide.forEach((id) => {
+      "btn-empty-back-landing",
+      "btn-back-landing",
+    ].forEach((id) => {
       const el = document.getElementById(id);
       if (el) el.hidden = true;
     });
 
-    const loadDemo = document.getElementById("btn-landing-load-demo");
-    if (loadDemo) {
-      loadDemo.textContent = "Open demo evidence";
+    const empty = document.getElementById("empty-state");
+    if (empty) {
+      empty.hidden = true;
+      const card = empty.querySelector(".empty-state-card");
+      if (card) card.hidden = true;
     }
+
+    const loadDemo = document.getElementById("btn-landing-load-demo");
+    if (loadDemo) loadDemo.hidden = true;
+  };
+
+  window.showGithubPagesDemoLoadError = function showGithubPagesDemoLoadError(message) {
+    const empty = document.getElementById("empty-state");
+    if (!empty) return;
+    empty.hidden = false;
+    empty.innerHTML = `
+      <div class="empty-state-card demo-error-card">
+        <h2>Demo evidence could not load</h2>
+        <p class="error">${message}</p>
+        <p class="muted">Try a hard refresh (cache). If this persists, open an issue on the repository.</p>
+      </div>
+    `;
   };
 })();

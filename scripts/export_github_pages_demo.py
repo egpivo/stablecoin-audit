@@ -141,11 +141,12 @@ def main() -> None:
       defaultRun: { asset: "USDC", run_id: "github_pages_demo" }
     };
   </script>
-  <script src="demo-mode.js"></script>
+  <script src="demo-mode.js?v=3"></script>
+  <script src="app.js?v=3" type="module"></script>
 """
     index = index.replace(
         '  <script src="app.js" type="module"></script>',
-        inject + '  <script src="app.js" type="module"></script>',
+        inject,
     )
     (ui_out / "index.html").write_text(index, encoding="utf-8")
 
