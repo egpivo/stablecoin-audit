@@ -4,7 +4,9 @@ const runListEl = document.getElementById("run-list");
 const runListStatusEl = document.getElementById("run-list-status");
 const runDetailEl = document.getElementById("run-detail");
 const emptyStateEl = document.getElementById("empty-state");
-const overviewContentEl = document.getElementById("overview-content");
+const auditSummaryCardsEl = document.getElementById("audit-summary-cards");
+const evidenceSummaryCardsEl = document.getElementById("evidence-summary-cards");
+const claimsCompactEl = document.getElementById("claims-compact");
 const supportedClaimsEl = document.getElementById("supported-claims");
 const unsupportedClaimsEl = document.getElementById("unsupported-claims");
 const artifactsBodyEl = document.getElementById("artifacts-body");
@@ -18,8 +20,52 @@ const healthStatusEl = document.getElementById("health-status");
 
 /** @type {RunDescriptor | null} */
 let selectedRun = null;
+/** @type {string} */
+let packageStatusLabel = "—";
 
 const API = "";
+
+const SUPPORTED_SUMMARY = [
+  { ids: ["transfer_activity_reconstructible"], label: "Transfer reconstruction" },
+  { ids: ["supply_snapshot_available"], label: "Supply snapshot availability" },
+  {
+    ids: ["supply_reconciliation_available"],
+    label: "Supply reconciliation for configured window",
+  },
+  {
+    ids: ["cross_chain_per_deployment_comparison"],
+    label: "Cross-chain per-deployment comparison",
+  },
+];
+
+const UNSUPPORTED_SUMMARY = [
+  {
+    label: "Reserves / redemption",
+    ids: [
+      "fiat_reserve_not_verified",
+      "redemption_capacity",
+      "circulating_supply_not_verified",
+    ],
+  },
+  { label: "Peg stability", ids: ["peg_stability"] },
+  {
+    label: "Bridge backing",
+    ids: ["bridge_backing_not_verified_without_bridge_collateral"],
+  },
+  {
+    label: "User geography / identity",
+    ids: ["user_geography", "holder_identity"],
+  },
+  { label: "Actual swap routing", ids: ["actual_swap_routing"] },
+  {
+    label: "Issuer intent / stress transmission",
+    ids: ["issuer_intent", "stress_transmission"],
+  },
+  {
+    label: "Liquidity exposure",
+    ids: ["liquidity_exposure_not_measured"],
+  },
+];
 
 async function apiFetch(path, options = {}) {
   const res = await fetch(`${API}${path}`, options);
@@ -63,21 +109,293 @@ function escapeHtml(text) {
   return div.innerHTML;
 }
 
+function basename(path) {
+  const parts = path.split("/");
+  return parts[parts.length - 1] || path;
+}
+
+function findArtifact(artifacts, { kind, suffix }) {
+  if (!artifacts) return null;
+  if (kind) {
+    const byKind = artifacts.find((a) => a.kind === kind);
+    if (byKind) return byKind;
+  }
+  if (suffix) {
+    return artifacts.find((a) => a.path.endsWith(suffix)) || null;
+  }
+  return null;
+}
+
+function artifactLinks(artifacts, labels) {
+  return labels
+    .map(({ kind, suffix, label }) => {
+      const art = findArtifact(artifacts, { kind, suffix });
+      if (!art) return null;
+      const href = `/api/artifacts/${encodeURI(art.path)}`;
+      return `<a class="evidence-link" href="${href}" target="_blank" rel="noopener">${escapeHtml(label || basename(art.path))}</a>`;
+    })
+    .filter(Boolean)
+    .join(" · ");
+}
+
+function rowCountLabel(art) {
+  if (!art) return "—";
+  if (art.row_count != null) return `${art.row_count.toLocaleString()} rows`;
+  return "Listed (row count not recorded)";
+}
+
+async function fetchQaReport(artifacts) {
+  const qaArt = findArtifact(artifacts, { kind: "qa_report", suffix: "qa_report.json" });
+  if (!qaArt) return null;
+  try {
+    return await apiFetch(`/api/artifacts/${encodeURI(qaArt.path)}`);
+  } catch {
+    return null;
+  }
+}
+
+function deriveAuditStatus(qaReport, manifest) {
+  if (!qaReport?.chains?.length) {
+    return manifest?.warnings?.length
+      ? { label: "Complete with warnings", tone: "warn" }
+      : { label: "Complete", tone: "ok" };
+  }
+
+  const allGateValues = qaReport.chains.flatMap((c) =>
+    Object.values(c.gates || {}).map((g) => String(g || "").toUpperCase())
+  );
+  const failChains = qaReport.chains.filter((c) =>
+    Object.values(c.gates || {}).some((g) => String(g || "").toUpperCase() === "FAIL")
+  );
+  if (failChains.length > 0) {
+    return {
+      label: `Gate FAIL on ${failChains.map((c) => c.chain).join(", ")}`,
+      tone: "fail",
+    };
+  }
+
+  const hasUnavailable = allGateValues.some((g) => g === "UNAVAILABLE");
+  if (hasUnavailable) {
+    return { label: "Complete — some gates UNAVAILABLE", tone: "warn" };
+  }
+
+  return { label: "Complete — gates PASS", tone: "ok" };
+}
+
+function deriveSupplyReconciliation(qaReport) {
+  if (!qaReport?.chains?.length) return { label: "See QA report", tone: "neutral" };
+
+  const statuses = qaReport.chains.map((c) =>
+    String(c.gates?.supply_invariant_pass || "UNAVAILABLE").toUpperCase()
+  );
+  const failChains = qaReport.chains.filter(
+    (c) => String(c.gates?.supply_invariant_pass || "UNAVAILABLE").toUpperCase() === "FAIL"
+  );
+  if (failChains.length > 0) {
+    return {
+      label: `FAIL on ${failChains.map((c) => c.chain).join(", ")}`,
+      tone: "fail",
+    };
+  }
+
+  const passCount = statuses.filter((s) => s === "PASS").length;
+  const unavailableCount = statuses.filter((s) => s === "UNAVAILABLE").length;
+
+  if (passCount === statuses.length) {
+    return {
+      label: `PASS (${qaReport.chains.length} chain${qaReport.chains.length === 1 ? "" : "s"})`,
+      tone: "ok",
+    };
+  }
+
+  if (unavailableCount === statuses.length) {
+    return {
+      label: `UNAVAILABLE (${qaReport.chains.length} chain${qaReport.chains.length === 1 ? "" : "s"})`,
+      tone: "warn",
+    };
+  }
+
+  return {
+    label: `PARTIAL (${passCount} PASS, ${unavailableCount} UNAVAILABLE)`,
+    tone: "warn",
+  };
+}
+
+function formatChainsWindows(manifest, qaReport) {
+  if (qaReport?.chains?.length) {
+    return qaReport.chains
+      .map((c) => {
+        const blocks = `${c.from_block} → ${c.resolved_to_block ?? "?"}`;
+        return `${c.chain} (${blocks})`;
+      })
+      .join("; ");
+  }
+  const snaps = manifest.source_snapshots || [];
+  if (snaps.length) {
+    return snaps
+      .map((s) => {
+        const w =
+          s.window_start || s.window_end
+            ? ` ${s.window_start || "?"} → ${s.window_end || "?"}`
+            : "";
+        return `${s.source_name}${w}`;
+      })
+      .join("; ");
+  }
+  return "—";
+}
+
+function summaryCard(label, value, tone = "neutral") {
+  return `
+    <div class="summary-card tone-${tone}">
+      <div class="summary-card-label">${escapeHtml(label)}</div>
+      <div class="summary-card-value">${value}</div>
+    </div>
+  `;
+}
+
+function evidenceCard(title, bodyHtml, tone = "neutral") {
+  return `
+    <article class="evidence-card tone-${tone}">
+      <h3>${escapeHtml(title)}</h3>
+      ${bodyHtml}
+    </article>
+  `;
+}
+
+function renderAuditSummary(manifest, artifacts, qaReport) {
+  const status = deriveAuditStatus(qaReport, manifest);
+  const supply = deriveSupplyReconciliation(qaReport);
+  const transfersArt =
+    findArtifact(artifacts, { kind: "canonical_transfers", suffix: "canonical_transfers.csv" }) ||
+    findArtifact(artifacts, { kind: "transfer_log", suffix: "decoded_transfers.csv" });
+  const snapshotsArt = findArtifact(artifacts, {
+    kind: "supply_snapshots",
+    suffix: "supply_snapshots.csv",
+  });
+
+  auditSummaryCardsEl.innerHTML = [
+    summaryCard("Audit status", escapeHtml(status.label), status.tone),
+    summaryCard(
+      "Asset / run",
+      `${escapeHtml(manifest.asset || "—")} · <code>${escapeHtml(manifest.run_id || "—")}</code>`,
+      "neutral"
+    ),
+    summaryCard(
+      "Chains / windows",
+      escapeHtml(formatChainsWindows(manifest, qaReport)),
+      "neutral"
+    ),
+    summaryCard("Transfer rows reconstructed", escapeHtml(rowCountLabel(transfersArt)), "neutral"),
+    summaryCard("Supply snapshots captured", escapeHtml(rowCountLabel(snapshotsArt)), "neutral"),
+    summaryCard("Supply reconciliation", escapeHtml(supply.label), supply.tone),
+    summaryCard("Evidence package", escapeHtml(packageStatusLabel), packageStatusLabel === "Built" ? "ok" : "neutral"),
+  ].join("");
+}
+
+function renderEvidenceSummary(manifest, artifacts, qaReport) {
+  const transfersArt =
+    findArtifact(artifacts, { kind: "canonical_transfers", suffix: "canonical_transfers.csv" }) ||
+    findArtifact(artifacts, { kind: "transfer_log", suffix: "decoded_transfers.csv" });
+  const snapshotsArt = findArtifact(artifacts, {
+    kind: "supply_snapshots",
+    suffix: "supply_snapshots.csv",
+  });
+  const supplyArt = findArtifact(artifacts, { kind: "supply_audit", suffix: "supply_audit.csv" });
+  const qaArt = findArtifact(artifacts, { kind: "qa_report", suffix: "qa_report.json" });
+  const supply = deriveSupplyReconciliation(qaReport);
+
+  const transferLinks = artifactLinks(artifacts, [
+    { suffix: "canonical_transfers.csv", label: "canonical_transfers.csv" },
+    { suffix: "decoded_transfers.csv", label: "decoded_transfers.csv" },
+  ]);
+
+  const snapshotLinks = artifactLinks(artifacts, [
+    { suffix: "supply_snapshots.csv", label: "supply_snapshots.csv" },
+  ]);
+
+  const reconciliationLinks = artifactLinks(artifacts, [
+    { suffix: "supply_audit.csv", label: "supply_audit.csv" },
+    { suffix: "supply_audit.md", label: "supply_audit.md" },
+    { suffix: "qa_report.json", label: "qa_report.json" },
+  ]);
+
+  const scopeLinks = artifactLinks(artifacts, [
+    { suffix: "provenance.json", label: "provenance.json" },
+    { suffix: "chain_windows.json", label: "chain_windows.json" },
+    { suffix: "deployment_registry.json", label: "deployment_registry.json" },
+    { suffix: "audit_plan.json", label: "audit_plan.json" },
+  ]);
+
+  evidenceSummaryCardsEl.innerHTML = [
+    evidenceCard(
+      "Transfer reconstruction",
+      `<p class="evidence-stat">${escapeHtml(rowCountLabel(transfersArt))}</p>
+       <p class="evidence-links">${transferLinks || '<span class="muted">No transfer artifacts listed</span>'}</p>`,
+      transfersArt ? "ok" : "neutral"
+    ),
+    evidenceCard(
+      "Supply snapshots",
+      `<p class="evidence-stat">${escapeHtml(rowCountLabel(snapshotsArt))}</p>
+       <p class="evidence-links">${snapshotLinks || '<span class="muted">No snapshot artifacts listed</span>'}</p>`,
+      snapshotsArt ? "ok" : "neutral"
+    ),
+    evidenceCard(
+      "Supply reconciliation",
+      `<p class="evidence-stat">${escapeHtml(supply.label)}</p>
+       <p class="evidence-links">${reconciliationLinks || '<span class="muted">No reconciliation artifacts listed</span>'}</p>`,
+      supply.tone
+    ),
+    evidenceCard(
+      "Provenance / scope",
+      `<p class="evidence-stat">${escapeHtml(formatChainsWindows(manifest, qaReport))}</p>
+       <p class="evidence-links">${scopeLinks || '<span class="muted">No scope artifacts listed</span>'}</p>`,
+      "neutral"
+    ),
+  ].join("");
+}
+
+function claimIds(claims) {
+  return new Set((claims || []).map((c) => c.claim));
+}
+
+function renderClaimsCompact(manifest) {
+  const supportedIds = claimIds(manifest.supported_claims);
+  const unsupportedIds = claimIds(manifest.unsupported_claims);
+
+  const supportedLines = SUPPORTED_SUMMARY.filter((g) =>
+    g.ids.some((id) => supportedIds.has(id))
+  ).map((g) => `<li>${escapeHtml(g.label)}</li>`);
+
+  const unsupportedLines = UNSUPPORTED_SUMMARY.filter((g) =>
+    g.ids.some((id) => unsupportedIds.has(id))
+  ).map((g) => `<li>${escapeHtml(g.label)}</li>`);
+
+  claimsCompactEl.innerHTML = `
+    <div class="claims-compact-grid">
+      <div class="claims-compact-block supported">
+        <h3>Supported</h3>
+        <ul>${supportedLines.length ? supportedLines.join("") : "<li class='muted'>None listed in manifest</li>"}</ul>
+      </div>
+      <div class="claims-compact-block unsupported">
+        <h3>Unsupported</h3>
+        <ul>${unsupportedLines.length ? unsupportedLines.join("") : "<li class='muted'>None listed in manifest</li>"}</ul>
+      </div>
+    </div>
+  `;
+}
+
 function renderClaimCard(claim) {
   const note =
     claim.statement ||
     claim.caveat ||
-    (claim.limitations && claim.limitations.length
-      ? claim.limitations.join(" ")
-      : "");
+    (claim.limitations?.length ? claim.limitations.join(" ") : "");
   const evidence =
     claim.evidence_artifacts?.length > 0
       ? `Evidence: ${claim.evidence_artifacts.join(", ")}`
       : "";
   const warnings =
-    claim.warnings?.length > 0
-      ? `Warnings: ${claim.warnings.join("; ")}`
-      : "";
+    claim.warnings?.length > 0 ? `Warnings: ${claim.warnings.join("; ")}` : "";
 
   return `
     <article class="claim-card">
@@ -91,62 +409,7 @@ function renderClaimCard(claim) {
   `;
 }
 
-function renderOverview(manifest) {
-  const inputs =
-    manifest.inputs?.length > 0
-      ? manifest.inputs.map((i) => `${i.name}=${i.value}`).join(", ")
-      : "—";
-
-  const steps = manifest.workflow_steps || [];
-  const snapshots = manifest.source_snapshots || [];
-
-  let chainsHtml = "—";
-  if (snapshots.length > 0) {
-    chainsHtml = snapshots
-      .map((s) => {
-        const window =
-          s.window_start || s.window_end
-            ? `${s.window_start || "?"} → ${s.window_end || "?"}`
-            : "";
-        return `<li><strong>${escapeHtml(s.source_name)}</strong>${window ? ` — ${escapeHtml(window)}` : ""}</li>`;
-      })
-      .join("");
-    chainsHtml = `<ul>${chainsHtml}</ul>`;
-  }
-
-  overviewContentEl.innerHTML = `
-    <dl class="overview-grid">
-      <div class="overview-item"><dt>Asset</dt><dd>${escapeHtml(manifest.asset || "—")}</dd></div>
-      <div class="overview-item"><dt>Run ID</dt><dd><code>${escapeHtml(manifest.run_id || "—")}</code></dd></div>
-      <div class="overview-item"><dt>Command</dt><dd>${escapeHtml(manifest.command || "—")}</dd></div>
-      <div class="overview-item"><dt>Generated</dt><dd>${escapeHtml(formatDate(manifest.generated_at))}</dd></div>
-      <div class="overview-item"><dt>Toolkit</dt><dd>${escapeHtml(manifest.toolkit_version || "—")}</dd></div>
-      <div class="overview-item"><dt>Inputs</dt><dd>${escapeHtml(inputs)}</dd></div>
-    </dl>
-    ${
-      steps.length > 0
-        ? `<div class="workflow-steps"><h3>Workflow steps</h3><ol>${steps
-            .map(
-              (s) =>
-                `<li><strong>${escapeHtml(s.command)}</strong> — ${escapeHtml(formatDate(s.completed_at))}${s.artifacts?.length ? ` (${escapeHtml(s.artifacts.join(", "))})` : ""}</li>`
-            )
-            .join("")}</ol></div>`
-        : ""
-    }
-    ${
-      snapshots.length > 0
-        ? `<div class="workflow-steps"><h3>Source snapshots / windows</h3>${chainsHtml}</div>`
-        : ""
-    }
-    ${
-      manifest.warnings?.length > 0
-        ? `<div class="warnings-list"><strong>Manifest warnings</strong><ul>${manifest.warnings.map((w) => `<li>${escapeHtml(w)}</li>`).join("")}</ul></div>`
-        : ""
-    }
-  `;
-}
-
-function renderClaims(manifest) {
+function renderClaimsFull(manifest) {
   const supported = manifest.supported_claims || [];
   const unsupported = manifest.unsupported_claims || [];
 
@@ -163,7 +426,7 @@ function renderClaims(manifest) {
 
 function renderArtifacts(artifacts) {
   artifactsBodyEl.innerHTML = "";
-  if (!artifacts || artifacts.length === 0) {
+  if (!artifacts?.length) {
     artifactsStatusEl.textContent = "No artifacts in manifest.";
     return;
   }
@@ -188,6 +451,7 @@ function renderPackageInfo(pkg) {
   packageContentEl.innerHTML = `
     <div class="package-info">
       <dl>
+        <dt>Status</dt><dd>Built</dd>
         <dt>Kind</dt><dd>${escapeHtml(pkg.package_kind || "—")}</dd>
         <dt>Generated</dt><dd>${escapeHtml(formatDate(pkg.generated_at))}</dd>
         <dt>Artifacts</dt><dd>${pkg.artifacts?.length ?? 0}</dd>
@@ -197,20 +461,24 @@ function renderPackageInfo(pkg) {
   `;
 }
 
+function setPackageJson(text) {
+  packageResultEl.textContent = text;
+}
+
 function setPackageButtons(hasRun, hasPackage = false) {
   btnBuildPackage.disabled = !hasRun;
   btnDownloadPackage.disabled = !hasPackage;
   btnVerifyPackage.disabled = !hasPackage;
 }
 
-async function loadPackagePanel(run) {
-  packageResultEl.hidden = true;
-  packageResultEl.textContent = "";
+async function loadPackagePanel(run, manifest, artifacts, qaReport) {
   setPackageButtons(!!run, false);
+  packageStatusLabel = run ? "Not built" : "—";
 
   if (!run) {
     packageContentEl.innerHTML =
       '<p class="panel-status">Select a run to inspect package options.</p>';
+    setPackageJson("No package JSON loaded yet.");
     return;
   }
 
@@ -219,16 +487,23 @@ async function loadPackagePanel(run) {
       `/api/runs/${encodeURIComponent(run.run_id)}/package${assetQuery(run)}`
     );
     renderPackageInfo(pkg);
+    setPackageJson(JSON.stringify(pkg, null, 2));
+    packageStatusLabel = "Built";
     setPackageButtons(true, true);
   } catch (err) {
+    setPackageJson("No package JSON loaded yet.");
     if (err.status === 404) {
       packageContentEl.innerHTML =
         '<p class="panel-status">No package built yet. Use <strong>Build package</strong> to generate <code>stablecoin_map_package.zip</code> from the manifest.</p>';
+      packageStatusLabel = "Not built";
     } else {
       packageContentEl.innerHTML = `<p class="panel-status error">${escapeHtml(err.message)}</p>`;
+      packageStatusLabel = "Error";
     }
     setPackageButtons(true, false);
   }
+
+  renderAuditSummary(manifest, artifacts, qaReport);
 }
 
 async function selectRun(run) {
@@ -244,18 +519,23 @@ async function selectRun(run) {
     const manifest = await apiFetch(
       `/api/runs/${encodeURIComponent(run.run_id)}/manifest${assetQuery(run)}`
     );
-    renderOverview(manifest);
-    renderClaims(manifest);
-
     const artResp = await apiFetch(
       `/api/runs/${encodeURIComponent(run.run_id)}/artifacts${assetQuery(run)}`
     );
-    renderArtifacts(artResp.artifacts);
-  } catch (err) {
-    overviewContentEl.innerHTML = `<p class="panel-status error">${escapeHtml(err.message)}</p>`;
-  }
+    const artifacts = artResp.artifacts || [];
+    const qaReport = await fetchQaReport(artifacts);
 
-  await loadPackagePanel(run);
+    renderAuditSummary(manifest, artifacts, qaReport);
+    renderEvidenceSummary(manifest, artifacts, qaReport);
+    renderClaimsCompact(manifest);
+    renderClaimsFull(manifest);
+    renderArtifacts(artifacts);
+
+    await loadPackagePanel(run, manifest, artifacts, qaReport);
+  } catch (err) {
+    auditSummaryCardsEl.innerHTML = `<p class="panel-status error">${escapeHtml(err.message)}</p>`;
+    evidenceSummaryCardsEl.innerHTML = "";
+  }
 }
 
 async function loadRuns() {
@@ -299,18 +579,27 @@ async function loadRuns() {
 
 btnBuildPackage.addEventListener("click", async () => {
   if (!selectedRun) return;
-  packageResultEl.hidden = false;
-  packageResultEl.textContent = "Building package…";
+  setPackageJson("Building package…");
+  document.getElementById("package-json-details").open = true;
   try {
     const pkg = await apiFetch(
       `/api/runs/${encodeURIComponent(selectedRun.run_id)}/package${assetQuery(selectedRun)}`,
       { method: "POST" }
     );
     renderPackageInfo(pkg);
-    packageResultEl.textContent = JSON.stringify(pkg, null, 2);
+    setPackageJson(JSON.stringify(pkg, null, 2));
+    packageStatusLabel = "Built";
     setPackageButtons(true, true);
+    const manifest = await apiFetch(
+      `/api/runs/${encodeURIComponent(selectedRun.run_id)}/manifest${assetQuery(selectedRun)}`
+    );
+    const artResp = await apiFetch(
+      `/api/runs/${encodeURIComponent(selectedRun.run_id)}/artifacts${assetQuery(selectedRun)}`
+    );
+    const qaReport = await fetchQaReport(artResp.artifacts);
+    renderAuditSummary(manifest, artResp.artifacts, qaReport);
   } catch (err) {
-    packageResultEl.textContent = `Error: ${err.message}`;
+    setPackageJson(`Error: ${err.message}`);
   }
 });
 
@@ -322,16 +611,16 @@ btnDownloadPackage.addEventListener("click", () => {
 
 btnVerifyPackage.addEventListener("click", async () => {
   if (!selectedRun) return;
-  packageResultEl.hidden = false;
-  packageResultEl.textContent = "Verifying package…";
+  setPackageJson("Verifying package…");
+  document.getElementById("package-json-details").open = true;
   try {
     const report = await apiFetch(
       `/api/runs/${encodeURIComponent(selectedRun.run_id)}/package/verify${assetQuery(selectedRun)}`,
       { method: "POST" }
     );
-    packageResultEl.textContent = JSON.stringify(report, null, 2);
+    setPackageJson(JSON.stringify(report, null, 2));
   } catch (err) {
-    packageResultEl.textContent = `Error: ${err.message}`;
+    setPackageJson(`Error: ${err.message}`);
   }
 });
 

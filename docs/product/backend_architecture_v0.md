@@ -28,29 +28,35 @@ Product (API, package, UI) → Artifact (manifest, files) → Claim (supported_c
 
 `artifact_manifest.json` is the **product run contract** — not the audit itself. It indexes artifacts and records claim boundaries; `supported_claims` / `unsupported_claims` are the semantic audit output.
 
-## Architecture layers (implementation)
+## Architecture layers (implementation — current v0)
+
+Detailed current-vs-target pipeline diagrams: [`audit_product_pipeline_v0.md`](audit_product_pipeline_v0.md).
 
 ```text
 ┌─────────────────────────────────────────────────────────────┐
-│  Frontend evidence browser (v0.5, future)                    │
-│  Reads manifest + CSV/JSON/MD only — no audit logic         │
+│  Evidence browser (/ui/) — read-only, served by API          │
+│  Reads manifest + artifact bytes — no audit logic           │
 └───────────────────────────────┬─────────────────────────────┘
                                 │ HTTP (read-only v0.3)
 ┌───────────────────────────────▼─────────────────────────────┐
 │  Thin API (v0.3) — axum, artifact_root jail                  │
-│  Runs, manifests, artifact bytes                               │
+│  Runs, manifests, artifacts, package build/verify/download   │
+│  No POST /api/runs orchestration (roadmap v0.4)               │
 └───────────────────────────────┬─────────────────────────────┘
-                                │ in-process calls (future: same crate)
+                                │ reads filesystem only
 ┌───────────────────────────────▼─────────────────────────────┐
-│  CLI — clap dispatch, stdout summaries, writes out/          │
+│  CLI — transfer-audit, cross-chain-summary, …                │
+│  Writes out/<asset>/runs/<run_id>/ + artifact_manifest.json  │
 └───────────────────────────────┬─────────────────────────────┘
                                 │
 ┌───────────────────────────────▼─────────────────────────────┐
 │  Rust core library                                           │
-│  domain · application · artifact · rpc · config · report   │
-│  Owns workflows, contracts, reproducibility, packaging       │
+│  audit · artifact · rpc · config · report                  │
+│  transfer-audit = single workflow (fetch→decode→QA→supply)   │
 └─────────────────────────────────────────────────────────────┘
 ```
+
+**Not implemented today:** HTTP audit request orchestration, independent evidence-collection service, separate `supply-audit` / `bridge-backing-audit` / `liquidity-exposure-audit` CLI engines.
 
 ### 1. Rust core library
 
@@ -85,11 +91,15 @@ Existing commands (0.1.0) remain: `transfer-audit`, `cross-chain-summary`, `reso
 
 **Does not:** Re-run audits on GET; proxy shell commands; generate charts; call RPC.
 
-**Status:** Read-only skeleton behind `cargo build --features api` and `stablecoin-audit serve`. See [`api_design_v0.md`](api_design_v0.md).
+**Status:** Read-only API + evidence browser shipped (`--features api`, `/ui/`). See [`api_design_v0.md`](api_design_v0.md), [`evidence_browser_v0.md`](evidence_browser_v0.md).
 
-### 4. Frontend evidence browser (v0.5, future)
+**Does not:** Re-run audits on GET; `POST /api/runs` orchestration (roadmap v0.4); proxy shell commands; generate charts; call RPC.
 
-**Owns:** Presentation — evidence cards, tables, claim-boundary copy, links from claims to artifact paths.
+### 4. Frontend evidence browser
+
+**Status:** Implemented — static UI at `/ui/` served by the API.
+
+**Owns:** Presentation — run list, claim boundaries, artifact table, package actions.
 
 **Reads:** `GET /api/runs`, manifest, and artifact bodies.
 
@@ -124,12 +134,13 @@ Published benchmarks under `docs/benchmarks/<run_id>/` mirror the same filenames
 
 ## Roadmap
 
-| Version | Goal | Implement now? |
-|---------|------|----------------|
-| **v0.2** | Module refactor + `ArtifactManifest` schema + product docs | Yes (skeleton) |
-| **v0.3** | Read-only `serve` API over `artifact_root` | Skeleton shipped (`--features api`) |
-| **v0.4** | POST runs, status, logs, cancel; job queue | Roadmap only |
-| **v0.5** | Static/SPA evidence browser | Roadmap only |
+| Version | Goal | Status |
+|---------|------|--------|
+| **v0.2** | Module refactor + `ArtifactManifest` schema + product docs | Shipped |
+| **v0.3** | Read-only `serve` API over `artifact_root` | Shipped (`--features api`) |
+| **v0.3.5** | Evidence browser at `/ui/` | Shipped |
+| **v0.4** | POST runs, status, logs, cancel; job queue | Roadmap |
+| **v0.5+** | Independent audit engines (supply-audit, bridge-backing, liquidity) | Roadmap |
 
 ## Public API boundaries (library)
 

@@ -216,6 +216,8 @@ For `stablecoin-map-package` and bundled evidence; same read-only jail model.
 | GET | `/api/runs/{run_id}/logs` | Log tail/stream |
 | POST | `/api/runs/{run_id}/cancel` | Cancel |
 
-## Frontend contract (v0.5)
+## Frontend contract (v0.3 + browser)
 
-The browser consumes v0.3 GET endpoints only. Panels map to manifest sections (run overview, claim boundaries, supply invariant, transfers, DEX liquidity, one-hop deps, source snapshots). No chart generation on server.
+The browser consumes v0.3 GET endpoints (and package POST for build/verify). Implemented at `/ui/`. See [`evidence_browser_v0.md`](evidence_browser_v0.md).
+
+Panels map to manifest sections (run overview, claim boundaries, artifacts, package). No chart generation on server. `POST /api/runs` audit orchestration remains roadmap v0.4.

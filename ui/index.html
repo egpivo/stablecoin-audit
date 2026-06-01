@@ -12,9 +12,13 @@
       <h1>Stablecoin Audit Evidence Browser</h1>
       <p class="tagline">Read-only inspection of completed audit runs</p>
     </div>
+    <p class="product-note" role="note">
+      This browser summarizes generated audit evidence. Raw artifacts remain available for verification,
+      but the UI does not create new claims.
+    </p>
     <aside class="demo-note" role="note">
-      This browser displays generated audit evidence. It does not claim reserve adequacy, peg stability,
-      redemption capacity, user geography, issuer intent, or actual swap routing.
+      It does not claim reserve adequacy, peg stability, redemption capacity, user geography,
+      issuer intent, or actual swap routing.
     </aside>
   </header>
 
@@ -26,28 +30,53 @@
     </nav>
 
     <main id="run-detail" class="run-detail" hidden>
-      <section class="panel" id="overview-panel">
-        <h2>Run overview</h2>
-        <div id="overview-content"></div>
+      <section class="panel panel-primary" id="audit-summary-panel">
+        <h2>Audit summary</h2>
+        <div id="audit-summary-cards" class="summary-cards"></div>
+      </section>
+
+      <section class="panel" id="evidence-summary-panel">
+        <h2>Evidence summary</h2>
+        <div id="evidence-summary-cards" class="evidence-cards"></div>
       </section>
 
       <section class="panel claims-panel" id="claims-panel">
         <h2>Claim boundaries</h2>
         <p class="claims-intro">What this toolkit attests — and what it explicitly does not.</p>
-        <div class="claims-grid">
-          <div class="claims-column supported">
-            <h3>Supported / conditional</h3>
-            <div id="supported-claims"></div>
+        <div id="claims-compact"></div>
+        <details class="collapsible" id="claims-full-details">
+          <summary>Show full claim catalog</summary>
+          <div class="claims-grid">
+            <div class="claims-column supported">
+              <h3>Supported / conditional</h3>
+              <div id="supported-claims"></div>
+            </div>
+            <div class="claims-column unsupported">
+              <h3>Unsupported (out of scope)</h3>
+              <div id="unsupported-claims"></div>
+            </div>
           </div>
-          <div class="claims-column unsupported">
-            <h3>Unsupported (out of scope)</h3>
-            <div id="unsupported-claims"></div>
-          </div>
-        </div>
+        </details>
       </section>
 
-      <section class="panel" id="artifacts-panel">
-        <h2>Artifacts</h2>
+      <section class="panel" id="package-panel">
+        <h2>Evidence package</h2>
+        <div id="package-content">
+          <p class="panel-status">Select a run to inspect package options.</p>
+        </div>
+        <div class="package-actions">
+          <button type="button" id="btn-build-package" disabled>Build package</button>
+          <button type="button" id="btn-download-package" disabled>Download zip</button>
+          <button type="button" id="btn-verify-package" disabled>Verify package</button>
+        </div>
+        <details class="collapsible" id="package-json-details">
+          <summary>Show package manifest JSON</summary>
+          <pre id="package-result" class="package-result">No package JSON loaded yet.</pre>
+        </details>
+      </section>
+
+      <details class="panel collapsible" id="raw-artifacts-panel">
+        <summary>Show raw artifacts</summary>
         <div id="artifacts-status" class="panel-status"></div>
         <div class="table-wrap">
           <table id="artifacts-table">
@@ -64,20 +93,7 @@
             <tbody id="artifacts-body"></tbody>
           </table>
         </div>
-      </section>
-
-      <section class="panel" id="package-panel">
-        <h2>Evidence package</h2>
-        <div id="package-content">
-          <p class="panel-status">Select a run to inspect package options.</p>
-        </div>
-        <div class="package-actions">
-          <button type="button" id="btn-build-package" disabled>Build package</button>
-          <button type="button" id="btn-download-package" disabled>Download zip</button>
-          <button type="button" id="btn-verify-package" disabled>Verify package</button>
-        </div>
-        <pre id="package-result" class="package-result" hidden></pre>
-      </section>
+      </details>
     </main>
 
     <main id="empty-state" class="empty-state">
