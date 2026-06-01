@@ -53,6 +53,16 @@ All run-scoped routes pass `?asset=` when the run descriptor includes an asset (
 - Files on disk that are not listed in `artifact_manifest.json`.
 - Runs without a valid `artifact_manifest.json`.
 
+## Audit request builder and local runner
+
+The browser includes an **Audit request builder** (always visible, even when no runs exist):
+
+- Build a reproducible `transfer-audit` CLI command (copy to terminal).
+- **Run audit locally** — `POST /api/runs` on the same API server (developer mode). Polls `/status` and `/logs`, then refreshes the run list when complete.
+- Requires RPC env vars (`.env`) on the machine running `cargo run --features api -- serve`.
+
+Execution trace: `out/<asset>/runs/<run_id>/execution_log.ndjson` (listed in `artifact_manifest.json` when present).
+
 ## Run instructions
 
 ### 1. Produce a completed run (if needed)

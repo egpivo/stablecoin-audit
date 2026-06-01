@@ -26,6 +26,10 @@ const reqFreshEl = document.getElementById("req-fresh");
 const reqMessageEl = document.getElementById("request-builder-message");
 const reqCommandEl = document.getElementById("request-builder-command");
 const btnCopyRequestCommand = document.getElementById("btn-copy-request-command");
+const btnRunLocalAudit = document.getElementById("btn-run-local-audit");
+const runExecutionPanel = document.getElementById("run-execution-panel");
+const runExecutionStatusEl = document.getElementById("run-execution-status");
+const runExecutionLogEl = document.getElementById("run-execution-log");
 
 /** @type {RunDescriptor | null} */
 let selectedRun = null;
@@ -77,6 +81,8 @@ const UNSUPPORTED_SUMMARY = [
 ];
 
 let generatedRequestCommand = "";
+/** @type {ReturnType<typeof setInterval> | null} */
+let pollTimer = null;
 
 async function apiFetch(path, options = {}) {
   const res = await fetch(`${API}${path}`, options);
@@ -239,12 +245,23 @@ function deriveSupplyReconciliation(qaReport) {
   };
 }
 
+function parseBlockInput(el) {
+  const raw = String(el.value ?? "").trim();
+  if (raw === "") return { missing: true };
+  if (!/^\d+$/.test(raw)) {
+    return { invalid: true };
+  }
+  const n = Number(raw);
+  if (!Number.isSafeInteger(n)) {
+    return { invalid: true };
+  }
+  return { value: n };
+}
+
 function validateRequestBuilderInput() {
   const asset = (reqAssetEl.value || "").trim();
   const runId = (reqRunIdEl.value || "").trim();
   const chain = (reqChainEl.value || "").trim().toLowerCase();
-  const fromBlockRaw = (reqFromBlockEl.value || "").trim();
-  const toBlockRaw = (reqToBlockEl.value || "").trim();
   const identifierPattern = /^[A-Za-z0-9_-]+$/;
 
   if (!asset) return { error: "asset is required." };
@@ -259,17 +276,24 @@ function validateRequestBuilderInput() {
   if (!identifierPattern.test(chain)) {
     return { error: "chain must match [A-Za-z0-9_-]+" };
   }
-  if (!fromBlockRaw || !toBlockRaw) return { error: "from_block and to_block are required." };
 
-  const fromBlock = Number(fromBlockRaw);
-  const toBlock = Number(toBlockRaw);
-  if (!Number.isInteger(fromBlock) || fromBlock < 0) {
-    return { error: "from_block must be a non-negative integer." };
+  const fromParsed = parseBlockInput(reqFromBlockEl);
+  const toParsed = parseBlockInput(reqToBlockEl);
+  if (fromParsed.missing || toParsed.missing) {
+    return { error: "from_block and to_block are required." };
   }
-  if (fromBlock === 0) {
-    return { error: "from_block 0 is not supported" };
+  if (fromParsed.invalid || toParsed.invalid) {
+    return {
+      error: "from_block and to_block must be non-negative integers (no decimals).",
+    };
   }
-  if (!Number.isInteger(toBlock) || toBlock < 0) {
+  const fromBlock = fromParsed.value;
+  const toBlock = toParsed.value;
+
+  if (fromBlock < 1) {
+    return { error: "from_block must be >= 1 (0 is not supported)." };
+  }
+  if (toBlock < 0) {
     return { error: "to_block must be a non-negative integer." };
   }
   if (toBlock < fromBlock) {
@@ -295,6 +319,7 @@ function buildRequestCommand() {
     reqCommandEl.textContent =
       "cargo run -- transfer-audit --asset <ASSET> --run-id <RUN_ID> \\\n  --window <chain>:<from_block>:<to_block>";
     btnCopyRequestCommand.disabled = true;
+    btnRunLocalAudit.disabled = true;
     return;
   }
 
@@ -307,9 +332,145 @@ function buildRequestCommand() {
   generatedRequestCommand = command;
   reqCommandEl.textContent = command;
   reqMessageEl.textContent =
-    "Copy and run this command in your terminal. Then refresh the run list to inspect generated evidence.";
+    "Copy the CLI command for reproducibility, or run locally via this API server (developer mode).";
   reqMessageEl.classList.remove("request-builder-error");
   btnCopyRequestCommand.disabled = false;
+  btnRunLocalAudit.disabled = false;
+}
+
+function renderExecutionLog(status, logs) {
+  const lines = (logs.entries || []).map(
+    (e) => `[${e.timestamp}] ${e.level}: ${e.message}`
+  );
+  runExecutionLogEl.textContent = lines.join("\n") || "(no log entries yet)";
+  if (status.error && !lines.length) {
+    runExecutionLogEl.textContent = status.error;
+  }
+}
+
+async function loadRuns(selectAsset = null, selectRunId = null) {
+  runListStatusEl.textContent = "Loading runs…";
+  runListEl.innerHTML = "";
+  try {
+    const data = await apiFetch("/api/runs");
+    const runs = data.runs || [];
+
+    if (runs.length === 0) {
+      runListStatusEl.textContent =
+        "No runs found. Use the request builder to run transfer-audit locally or via CLI.";
+      runDetailEl.hidden = true;
+      emptyStateEl.hidden = false;
+      return;
+    }
+
+    runListStatusEl.textContent = `${runs.length} run(s)`;
+
+    for (const run of runs) {
+      const li = document.createElement("li");
+      li.className = "run-item";
+      const btn = document.createElement("button");
+      btn.type = "button";
+      btn.dataset.runId = run.run_id;
+      btn.innerHTML = `
+        <div class="run-asset">${escapeHtml(run.asset)}</div>
+        <div class="run-id">${escapeHtml(run.run_id)}</div>
+        <div class="run-meta">${escapeHtml(run.command)} · ${escapeHtml(formatDate(run.generated_at))}</div>
+      `;
+      btn.addEventListener("click", () => selectRun(run));
+      li.appendChild(btn);
+      runListEl.appendChild(li);
+    }
+
+    let target = runs[0];
+    if (selectAsset && selectRunId) {
+      const match = runs.find(
+        (r) =>
+          r.run_id === selectRunId &&
+          r.asset.toUpperCase() === selectAsset.toUpperCase()
+      );
+      if (match) target = match;
+    }
+    await selectRun(target);
+    emptyStateEl.hidden = true;
+  } catch (err) {
+    runListStatusEl.textContent = `Failed to load runs: ${err.message}`;
+    runListStatusEl.classList.add("error");
+  }
+}
+
+async function pollRunUntilDone(asset, runId) {
+  if (pollTimer) clearInterval(pollTimer);
+  const q = `?asset=${encodeURIComponent(asset)}`;
+  const poll = async () => {
+    try {
+      const status = await apiFetch(
+        `/api/runs/${encodeURIComponent(runId)}/status${q}`
+      );
+      const logs = await apiFetch(
+        `/api/runs/${encodeURIComponent(runId)}/logs${q}`
+      );
+      renderExecutionLog(status, logs);
+      if (status.status === "running" || status.status === "queued") {
+        runExecutionStatusEl.textContent = `Status: ${status.status}…`;
+        return;
+      }
+      clearInterval(pollTimer);
+      pollTimer = null;
+      btnRunLocalAudit.disabled = false;
+      if (status.status === "succeeded") {
+        runExecutionStatusEl.textContent = "Completed — loading evidence…";
+        await loadRuns(asset, runId);
+        runExecutionStatusEl.textContent = "Completed.";
+      } else {
+        let msg = `Failed: ${status.error || "see execution log"}`;
+        if (status.has_manifest) {
+          msg +=
+            " Prior artifact_manifest.json may still be on disk from an earlier run.";
+        }
+        runExecutionStatusEl.textContent = msg;
+      }
+    } catch (err) {
+      runExecutionStatusEl.textContent = `Poll error: ${err.message}`;
+    }
+  };
+  await poll();
+  pollTimer = setInterval(poll, 2000);
+}
+
+async function runLocalAudit() {
+  const parsed = validateRequestBuilderInput();
+  if (parsed.error) {
+    reqMessageEl.textContent = parsed.error;
+    reqMessageEl.classList.add("request-builder-error");
+    return;
+  }
+  btnRunLocalAudit.disabled = true;
+  runExecutionPanel.hidden = false;
+  runExecutionStatusEl.textContent = "Starting local transfer-audit…";
+  runExecutionLogEl.textContent = "";
+  reqMessageEl.classList.remove("request-builder-error");
+  try {
+    const asset = parsed.asset.toUpperCase();
+    await apiFetch("/api/runs", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        asset,
+        run_id: parsed.runId,
+        window: {
+          chain: parsed.chain,
+          from_block: parsed.fromBlock,
+          to_block: parsed.toBlock,
+        },
+        fresh: parsed.fresh,
+      }),
+    });
+    reqMessageEl.textContent = "Local run started. Polling status and logs…";
+    await pollRunUntilDone(asset, parsed.runId);
+  } catch (err) {
+    runExecutionStatusEl.textContent = `Failed to start: ${err.message}`;
+    btnRunLocalAudit.disabled = false;
+  }
 }
 
 async function copyRequestCommand() {
@@ -662,44 +823,6 @@ async function selectRun(run) {
   }
 }
 
-async function loadRuns() {
-  runListStatusEl.textContent = "Loading runs…";
-  runListEl.innerHTML = "";
-
-  try {
-    const data = await apiFetch("/api/runs");
-    const runs = data.runs || [];
-
-    if (runs.length === 0) {
-      runListStatusEl.textContent =
-        "No runs found. Complete a transfer-audit run with artifact_manifest.json under out/.";
-      return;
-    }
-
-    runListStatusEl.textContent = `${runs.length} run(s)`;
-
-    for (const run of runs) {
-      const li = document.createElement("li");
-      li.className = "run-item";
-      const btn = document.createElement("button");
-      btn.type = "button";
-      btn.dataset.runId = run.run_id;
-      btn.innerHTML = `
-        <div class="run-asset">${escapeHtml(run.asset)}</div>
-        <div class="run-id">${escapeHtml(run.run_id)}</div>
-        <div class="run-meta">${escapeHtml(run.command)} · ${escapeHtml(formatDate(run.generated_at))}</div>
-      `;
-      btn.addEventListener("click", () => selectRun(run));
-      li.appendChild(btn);
-      runListEl.appendChild(li);
-    }
-
-    await selectRun(runs[0]);
-  } catch (err) {
-    runListStatusEl.textContent = `Failed to load runs: ${err.message}`;
-    runListStatusEl.classList.add("error");
-  }
-}
 
 btnBuildPackage.addEventListener("click", async () => {
   if (!selectedRun) return;
@@ -753,6 +876,7 @@ btnVerifyPackage.addEventListener("click", async () => {
   el.addEventListener("change", buildRequestCommand);
 });
 btnCopyRequestCommand.addEventListener("click", copyRequestCommand);
+btnRunLocalAudit.addEventListener("click", runLocalAudit);
 
 async function checkHealth() {
   try {

@@ -326,6 +326,13 @@ fn collect_artifacts(out_dir: &Path) -> Result<Vec<ArtifactRef>> {
             "Decoded Transfer events in window (legacy workflow output)",
             None,
         ),
+        (
+            crate::artifact::execution_log::EXECUTION_LOG_FILENAME,
+            ArtifactKind::Other,
+            ArtifactFormat::Other,
+            "Local transfer-audit execution trace (NDJSON)",
+            Some(crate::artifact::execution_log::EXECUTION_LOG_SCHEMA),
+        ),
     ];
 
     let mut artifacts = Vec::new();

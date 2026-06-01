@@ -21,7 +21,7 @@ use crate::audit::{write_canonical_audit_tables, CanonicalWriteParams};
 use crate::config::{load_single_token_config, TokenConfig};
 use crate::decode::{decode_transfer_log, sample_decode_qa};
 use crate::fetch::{fetch_transfer_logs_incremental, FetchParams};
-use crate::report::{default_run_id, ensure_run_out_dir, format_token_amount, validate_run_id};
+use crate::report::{default_run_id, ensure_run_out_dir_at, format_token_amount, validate_run_id};
 use crate::rpc::transfer_checkpoint::{
     self, ChainSpecRecord, CheckpointChainBundle, CheckpointManifest, FetchChunkProgress,
 };
@@ -191,7 +191,35 @@ pub async fn run_per_chain_windows(
     run_id: Option<String>,
     fresh: bool,
 ) -> Result<()> {
-    run_inner(asset, RunMode::PerChain(windows), chunk_size, run_id, fresh).await
+    run_per_chain_windows_at(
+        std::path::Path::new("out"),
+        asset,
+        windows,
+        chunk_size,
+        run_id,
+        fresh,
+    )
+    .await
+}
+
+/// Same as [`run_per_chain_windows`] but writes under `artifact_root` instead of `./out`.
+pub async fn run_per_chain_windows_at(
+    artifact_root: &std::path::Path,
+    asset: &str,
+    windows: Vec<(String, u64, u64)>,
+    chunk_size: Option<u64>,
+    run_id: Option<String>,
+    fresh: bool,
+) -> Result<()> {
+    run_inner_at(
+        artifact_root,
+        asset,
+        RunMode::PerChain(windows),
+        chunk_size,
+        run_id,
+        fresh,
+    )
+    .await
 }
 
 pub(crate) enum RunMode<'a> {
@@ -344,6 +372,25 @@ async fn run_inner(
     run_id: Option<String>,
     fresh: bool,
 ) -> Result<()> {
+    run_inner_at(
+        std::path::Path::new("out"),
+        asset,
+        mode,
+        chunk_size,
+        run_id,
+        fresh,
+    )
+    .await
+}
+
+async fn run_inner_at(
+    artifact_root: &std::path::Path,
+    asset: &str,
+    mode: RunMode<'_>,
+    chunk_size: Option<u64>,
+    run_id: Option<String>,
+    fresh: bool,
+) -> Result<()> {
     let chunk_size = chunk_size.unwrap_or(DEFAULT_CHUNK_SIZE);
     let run_id = match run_id {
         Some(r) => {
@@ -352,7 +399,7 @@ async fn run_inner(
         }
         None => default_run_id(),
     };
-    let out_dir = ensure_run_out_dir(asset, &run_id)?;
+    let out_dir = ensure_run_out_dir_at(artifact_root, asset, &run_id)?;
     let plan = build_run_plan(mode)?;
 
     if fresh {

@@ -14,12 +14,16 @@ use crate::artifact::{ArtifactManifest, PackageManifest, PackageVerificationRepo
 use super::artifact_store::{ArtifactStore, RunArtifactsResponse, RunsResponse};
 use super::error::ApiError;
 use super::path_jail::{content_type_for_path, open_artifact_file};
+use super::run_jobs::{
+    CreateRunRequest, CreateRunResponse, RunJobRegistry, RunLogsResponse, RunStatusResponse,
+};
 
 const TOOLKIT_VERSION: &str = env!("CARGO_PKG_VERSION");
 
 #[derive(Clone)]
 pub struct AppState {
     pub store: Arc<ArtifactStore>,
+    pub jobs: RunJobRegistry,
 }
 
 #[derive(Debug, Deserialize)]
@@ -34,11 +38,14 @@ fn ui_dir() -> PathBuf {
 pub fn router(store: ArtifactStore) -> Router {
     let state = AppState {
         store: Arc::new(store),
+        jobs: RunJobRegistry::new(),
     };
     let ui = ServeDir::new(ui_dir()).append_index_html_on_directories(true);
     Router::new()
         .route("/health", get(health))
-        .route("/api/runs", get(list_runs))
+        .route("/api/runs", get(list_runs).post(create_run))
+        .route("/api/runs/:run_id/status", get(get_run_status))
+        .route("/api/runs/:run_id/logs", get(get_run_logs))
         .route("/api/runs/:run_id/manifest", get(get_manifest))
         .route("/api/runs/:run_id/artifacts", get(get_artifacts))
         .route(
@@ -63,6 +70,36 @@ async fn health() -> Json<serde_json::Value> {
 async fn list_runs(State(state): State<AppState>) -> Result<Json<RunsResponse>, ApiError> {
     let runs = state.store.list_runs()?;
     Ok(Json(RunsResponse { runs }))
+}
+
+async fn create_run(
+    State(state): State<AppState>,
+    Json(body): Json<CreateRunRequest>,
+) -> Result<(StatusCode, Json<CreateRunResponse>), ApiError> {
+    let resp = super::run_jobs::start_run(state.store.clone(), state.jobs.clone(), body).await?;
+    Ok((StatusCode::ACCEPTED, Json(resp)))
+}
+
+async fn get_run_status(
+    State(state): State<AppState>,
+    Path(run_id): Path<String>,
+    Query(query): Query<AssetQuery>,
+) -> Result<Json<RunStatusResponse>, ApiError> {
+    let resp =
+        super::run_jobs::get_status(&state.store, &state.jobs, &run_id, query.asset.as_deref())
+            .await?;
+    Ok(Json(resp))
+}
+
+async fn get_run_logs(
+    State(state): State<AppState>,
+    Path(run_id): Path<String>,
+    Query(query): Query<AssetQuery>,
+) -> Result<Json<RunLogsResponse>, ApiError> {
+    let resp =
+        super::run_jobs::get_logs(&state.store, &state.jobs, &run_id, query.asset.as_deref())
+            .await?;
+    Ok(Json(resp))
 }
 
 async fn get_manifest(

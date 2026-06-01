@@ -33,7 +33,7 @@
       <section class="panel" id="request-builder-panel">
         <h2>Audit request builder</h2>
         <p class="panel-status">
-          Build a reproducible <code>transfer-audit</code> command here. Execution still happens via Rust CLI on your machine.
+          Build a reproducible <code>transfer-audit</code> command, or run locally through this API server (developer mode only).
         </p>
         <div class="request-builder-grid">
           <label>
@@ -64,7 +64,13 @@
         <div id="request-builder-message" class="panel-status"></div>
         <pre id="request-builder-command" class="package-result"></pre>
         <div class="package-actions">
-          <button type="button" id="btn-copy-request-command">Copy command</button>
+          <button type="button" id="btn-copy-request-command">Copy CLI command</button>
+          <button type="button" id="btn-run-local-audit">Run audit locally</button>
+        </div>
+        <div id="run-execution-panel" class="run-execution-panel" hidden>
+          <h3>Local execution</h3>
+          <div id="run-execution-status" class="panel-status"></div>
+          <pre id="run-execution-log" class="package-result execution-log-view"></pre>
         </div>
       </section>
 

@@ -207,14 +207,41 @@ GET /api/packages/{package_id}/manifest
 
 For `stablecoin-map-package` and bundled evidence; same read-only jail model.
 
-## Roadmap: v0.4 run orchestration (not implemented)
+## Local run orchestration (developer mode)
+
+**Local-only** — triggers `transfer-audit` in-process on the API server host. Not a hosted multi-tenant queue.
+
+### `POST /api/runs`
+
+Request body:
+
+```json
+{
+  "asset": "USDC",
+  "run_id": "demo_001",
+  "window": { "chain": "ethereum", "from_block": 24000000, "to_block": 24001000 },
+  "fresh": true
+}
+```
+
+Validation: asset allowlist (`USDC`, `EURC`, `XSGD`), chain must exist in `configs/tokens/`, `from_block >= 1`, `to_block >= from_block`, max block span, safe `run_id` characters.
+
+Returns `202 Accepted` with job status `running`. Writes `execution_log.ndjson` under the run directory; on success, normal `artifact_manifest.json` and listed artifacts.
+
+### `GET /api/runs/{run_id}/status?asset=`
+
+Job status: `queued`, `running`, `succeeded`, `failed`, plus `has_manifest`.
+
+### `GET /api/runs/{run_id}/logs?asset=`
+
+NDJSON execution log entries from `execution_log.ndjson`.
+
+## Roadmap: hosted orchestration (not implemented)
 
 | Method | Path | Purpose |
 |--------|------|---------|
-| POST | `/api/runs` | Enqueue workflow |
-| GET | `/api/runs/{run_id}/status` | Job status |
-| GET | `/api/runs/{run_id}/logs` | Log tail/stream |
-| POST | `/api/runs/{run_id}/cancel` | Cancel |
+| POST | `/api/runs/{run_id}/cancel` | Cancel in-flight job |
+| Multi-tenant job queue | | |
 
 ## Frontend contract (v0.3 + browser)
 

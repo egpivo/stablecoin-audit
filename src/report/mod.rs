@@ -4,6 +4,11 @@ use chrono::Utc;
 use std::path::Path;
 
 pub fn ensure_out_dir(asset: &str) -> Result<std::path::PathBuf> {
+    ensure_out_dir_at(Path::new("out"), asset)
+}
+
+/// Artifact root directory for an asset (e.g. `{root}/usdc`).
+pub fn ensure_out_dir_at(base: &Path, asset: &str) -> Result<std::path::PathBuf> {
     if asset.is_empty()
         || !asset
             .chars()
@@ -11,7 +16,7 @@ pub fn ensure_out_dir(asset: &str) -> Result<std::path::PathBuf> {
     {
         anyhow::bail!("asset identifier {:?} contains invalid characters", asset);
     }
-    let dir = Path::new("out").join(asset.to_lowercase());
+    let dir = base.join(asset.to_lowercase());
     std::fs::create_dir_all(&dir)?;
     Ok(dir)
 }
@@ -48,8 +53,13 @@ pub fn default_run_id() -> String {
 
 /// Resolved run directory: `out/<asset>/runs/<run_id>/`.
 pub fn ensure_run_out_dir(asset: &str, run_id: &str) -> Result<std::path::PathBuf> {
+    ensure_run_out_dir_at(Path::new("out"), asset, run_id)
+}
+
+/// Resolved run directory under a custom artifact root.
+pub fn ensure_run_out_dir_at(base: &Path, asset: &str, run_id: &str) -> Result<std::path::PathBuf> {
     validate_run_id(run_id)?;
-    let base = ensure_out_dir(asset)?;
+    let base = ensure_out_dir_at(base, asset)?;
     let dir = base.join("runs").join(run_id);
     std::fs::create_dir_all(&dir).with_context(|| format!("create run dir {}", dir.display()))?;
     Ok(dir)

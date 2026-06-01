@@ -2,6 +2,7 @@ pub mod artifact_store;
 pub mod error;
 pub mod path_jail;
 pub mod routes;
+pub mod run_jobs;
 
 use std::net::SocketAddr;
 use std::path::Path;
@@ -789,6 +790,105 @@ mod tests {
         assert!(!report.artifacts.iter().any(|a| a.path == "orphan.csv"));
         assert!(report.artifacts.iter().all(|a| a.valid));
         assert!(!report.package_valid);
+        let _ = std::fs::remove_dir_all(&root);
+    }
+
+    #[test]
+    fn validate_create_run_rejects_from_block_zero() {
+        use super::run_jobs::{validate_create_run, CreateRunRequest, WindowSpec};
+        let err = validate_create_run(&CreateRunRequest {
+            asset: "USDC".into(),
+            run_id: "api_val_001".into(),
+            window: WindowSpec {
+                chain: "ethereum".into(),
+                from_block: 0,
+                to_block: 100,
+            },
+            fresh: true,
+        })
+        .unwrap_err();
+        assert_eq!(err.code, super::ErrorCode::ValidationError);
+        assert!(err.message.contains("from_block 0"));
+    }
+
+    #[test]
+    fn validate_create_run_rejects_unknown_asset() {
+        use super::run_jobs::{validate_create_run, CreateRunRequest, WindowSpec};
+        let err = validate_create_run(&CreateRunRequest {
+            asset: "FAKE".into(),
+            run_id: "api_val_002".into(),
+            window: WindowSpec {
+                chain: "ethereum".into(),
+                from_block: 100,
+                to_block: 200,
+            },
+            fresh: false,
+        })
+        .unwrap_err();
+        assert_eq!(err.code, super::ErrorCode::ValidationError);
+    }
+
+    #[tokio::test]
+    async fn post_create_run_returns_accepted() {
+        let root = temp_api_root("post_run");
+        let _ = std::fs::remove_dir_all(&root);
+        std::fs::create_dir_all(&root).unwrap();
+        let app = router(ArtifactStore::open(&root).unwrap());
+        let body = serde_json::json!({
+            "asset": "USDC",
+            "run_id": format!("api_post_{}", std::process::id()),
+            "window": { "chain": "ethereum", "from_block": 24000000, "to_block": 24001000 },
+            "fresh": true
+        });
+        let response = app
+            .oneshot(
+                Request::post("/api/runs")
+                    .header("content-type", "application/json")
+                    .body(Body::from(body.to_string()))
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(response.status(), StatusCode::ACCEPTED);
+        let _ = std::fs::remove_dir_all(&root);
+    }
+
+    #[tokio::test]
+    async fn get_run_status_not_found_without_run() {
+        let app = router(test_store());
+        let response = app
+            .oneshot(
+                Request::get("/api/runs/no_such_run_xyz/status?asset=USDC")
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(response.status(), StatusCode::NOT_FOUND);
+    }
+
+    #[tokio::test]
+    async fn get_run_logs_not_found_without_creating_run_dir() {
+        let root = temp_api_root("logs_no_mkdir");
+        let _ = std::fs::remove_dir_all(&root);
+        std::fs::create_dir_all(&root).unwrap();
+        let app = router(ArtifactStore::open(&root).unwrap());
+        let run_id = "no_such_run_logs_xyz";
+        let response = app
+            .oneshot(
+                Request::get(format!("/api/runs/{run_id}/logs?asset=USDC"))
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(response.status(), StatusCode::NOT_FOUND);
+        let run_path = root.join("usdc/runs").join(run_id);
+        assert!(
+            !run_path.exists(),
+            "logs for unknown run must not create {}",
+            run_path.display()
+        );
         let _ = std::fs::remove_dir_all(&root);
     }
 }

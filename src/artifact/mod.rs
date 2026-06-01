@@ -1,6 +1,7 @@
 pub mod audit_plan;
 pub mod checksum;
 pub mod cross_chain_summary_manifest;
+pub mod execution_log;
 pub mod manifest;
 pub mod stablecoin_map_package;
 pub mod transfer_audit_manifest;
@@ -21,6 +22,10 @@ pub use stablecoin_map_package::{
 
 pub use cross_chain_summary_manifest::{
     upsert_cross_chain_summary_manifest, CrossChainSummaryManifestParams,
+};
+pub use execution_log::{
+    reset_execution_log, upsert_execution_log_in_manifest, ExecutionLogEntry, ExecutionLogWriter,
+    EXECUTION_LOG_FILENAME, EXECUTION_LOG_SCHEMA,
 };
 pub use manifest::{
     ArtifactFormat, ArtifactKind, ArtifactManifest, ArtifactRef, Claim, ClaimBoundary, ClaimStatus,

@@ -12,6 +12,7 @@ pub enum ErrorCode {
     AmbiguousRunId,
     PackageNotFound,
     PackageCorrupt,
+    ValidationError,
     IoError,
 }
 
@@ -73,6 +74,14 @@ impl ApiError {
         Self {
             status: StatusCode::BAD_REQUEST,
             code: ErrorCode::AmbiguousRunId,
+            message: message.into(),
+        }
+    }
+
+    pub fn validation_error(message: impl Into<String>) -> Self {
+        Self {
+            status: StatusCode::BAD_REQUEST,
+            code: ErrorCode::ValidationError,
             message: message.into(),
         }
     }

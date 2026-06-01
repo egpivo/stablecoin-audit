@@ -601,6 +601,22 @@ a.download-link:hover {
   color: var(--unsupported-border);
 }
 
+.run-execution-panel {
+  margin-top: 1rem;
+  padding-top: 0.75rem;
+  border-top: 1px solid var(--border);
+}
+
+.run-execution-panel h3 {
+  margin: 0 0 0.5rem;
+  font-size: 0.9rem;
+}
+
+.execution-log-view {
+  max-height: 240px;
+  overflow-y: auto;
+}
+
 .package-result {
   margin-top: 0.75rem;
   padding: 0.65rem;
