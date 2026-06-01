@@ -1,0 +1,11 @@
+{
+  "runs": [
+    {
+      "asset": "USDC",
+      "run_id": "github_pages_demo",
+      "command": "transfer-audit",
+      "generated_at": "2026-06-01T11:38:57.375048Z",
+      "manifest_path": "usdc/runs/github_pages_demo/artifact_manifest.json"
+    }
+  ]
+}

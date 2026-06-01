@@ -1,0 +1,94 @@
+{
+  "run_id": "github_pages_demo",
+  "asset": "USDC",
+  "artifacts": [
+    {
+      "kind": "audit_plan",
+      "path": "usdc/runs/github_pages_demo/audit_plan.json",
+      "format": "json",
+      "row_count": null,
+      "checksum_sha256": "2bc1f30035008620ceeed44f1c96406401366c79109ca5183612ab6190076cb9",
+      "description": "Declared audit scope, requested checks, and out-of-scope boundaries"
+    },
+    {
+      "kind": "evidence_sources",
+      "path": "usdc/runs/github_pages_demo/evidence_sources.json",
+      "format": "json",
+      "row_count": null,
+      "checksum_sha256": "bcc949002fa51fc8feba9e49345781db618bc829261837291f449379edd9cfc8",
+      "description": "Evidence source registry for this run"
+    },
+    {
+      "kind": "deployment_registry",
+      "path": "usdc/runs/github_pages_demo/deployment_registry.json",
+      "format": "json",
+      "row_count": null,
+      "checksum_sha256": "c8c36b2f47fcb880926aa83687601e2c6e576152c6d92d4b06b4311a68ca395c",
+      "description": "In-scope token deployments and evidence lineage"
+    },
+    {
+      "kind": "chain_windows",
+      "path": "usdc/runs/github_pages_demo/chain_windows.json",
+      "format": "json",
+      "row_count": null,
+      "checksum_sha256": "5ab24e3ca960093161b238cd5650e678b6f635b41ed780ef2179e29112818a92",
+      "description": "Per-chain audit block windows"
+    },
+    {
+      "kind": "supply_snapshots",
+      "path": "usdc/runs/github_pages_demo/supply_snapshots.csv",
+      "format": "csv",
+      "row_count": 2,
+      "checksum_sha256": "b3dcfeb6f8cd84281f1dc48657de0da90f445196709867c41348bd97bffa9997",
+      "description": "Pinned totalSupply snapshots per chain"
+    },
+    {
+      "kind": "qa_report",
+      "path": "usdc/runs/github_pages_demo/qa_report.json",
+      "format": "json",
+      "row_count": null,
+      "checksum_sha256": "49b2a58f3a5fd2b9433c586fa5d9ce111eb253cc8efed8596c061bdb7311df5f",
+      "description": "Per-chain QA gates (PASS/FAIL)"
+    },
+    {
+      "kind": "provenance",
+      "path": "usdc/runs/github_pages_demo/provenance.json",
+      "format": "json",
+      "row_count": null,
+      "checksum_sha256": "d1a94eb4e77567f7fc78f0edfad332fa24e1d78f1cdac1f9c7efc2b492acd9a2",
+      "description": "Per-chain block windows and contract addresses"
+    },
+    {
+      "kind": "supply_audit",
+      "path": "usdc/runs/github_pages_demo/supply_audit.csv",
+      "format": "csv",
+      "row_count": 1,
+      "checksum_sha256": "244be32e9162b6f9efc45a1b1f47c8bae2331d8db0ecd94965acfdadd678e5ea",
+      "description": "Mint/burn aggregate vs totalSupply delta per chain"
+    },
+    {
+      "kind": "supply_audit",
+      "path": "usdc/runs/github_pages_demo/supply_audit.md",
+      "format": "markdown",
+      "row_count": null,
+      "checksum_sha256": "52b9de1b77d1b63adf43f1f41a95ec5eaed9e9b5d5448fd6b921c251e905edff",
+      "description": "Human-readable supply invariant report"
+    },
+    {
+      "kind": "summary",
+      "path": "usdc/runs/github_pages_demo/summary.md",
+      "format": "markdown",
+      "row_count": null,
+      "checksum_sha256": "3ad94168ade4b29104d4236ee7bc08a6e851645660b7eca36c0e0eee31307067",
+      "description": "Transfer-audit run summary"
+    },
+    {
+      "kind": "other",
+      "path": "usdc/runs/github_pages_demo/execution_log.ndjson",
+      "format": "other",
+      "row_count": null,
+      "checksum_sha256": "c68fcd910ab20d60f01295b9a9a7db5e27c4988d344d59191a99d59cb6d92ef5",
+      "description": "Local transfer-audit execution trace (NDJSON)"
+    }
+  ]
+}

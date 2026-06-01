@@ -1,0 +1,324 @@
+{
+  "schema": "artifact-manifest-v0",
+  "toolkit_version": "0.1.0",
+  "generated_at": "2026-06-01T11:38:57.375048Z",
+  "command": "transfer-audit",
+  "run_id": "github_pages_demo",
+  "package_id": null,
+  "asset": "USDC",
+  "inputs": [
+    {
+      "name": "asset",
+      "value": "USDC"
+    },
+    {
+      "name": "per_chain_spans",
+      "value": "true"
+    },
+    {
+      "name": "window",
+      "value": "ethereum:24000000:24000100"
+    }
+  ],
+  "artifacts": [
+    {
+      "kind": "audit_plan",
+      "path": "audit_plan.json",
+      "format": "json",
+      "row_count": null,
+      "checksum_sha256": "2bc1f30035008620ceeed44f1c96406401366c79109ca5183612ab6190076cb9",
+      "description": "Declared audit scope, requested checks, and out-of-scope boundaries",
+      "schema": "audit-plan-v0"
+    },
+    {
+      "kind": "evidence_sources",
+      "path": "evidence_sources.json",
+      "format": "json",
+      "row_count": null,
+      "checksum_sha256": "bcc949002fa51fc8feba9e49345781db618bc829261837291f449379edd9cfc8",
+      "description": "Evidence source registry for this run",
+      "schema": "evidence-sources-v0"
+    },
+    {
+      "kind": "deployment_registry",
+      "path": "deployment_registry.json",
+      "format": "json",
+      "row_count": null,
+      "checksum_sha256": "c8c36b2f47fcb880926aa83687601e2c6e576152c6d92d4b06b4311a68ca395c",
+      "description": "In-scope token deployments and evidence lineage",
+      "schema": "deployment-registry-v0"
+    },
+    {
+      "kind": "chain_windows",
+      "path": "chain_windows.json",
+      "format": "json",
+      "row_count": null,
+      "checksum_sha256": "5ab24e3ca960093161b238cd5650e678b6f635b41ed780ef2179e29112818a92",
+      "description": "Per-chain audit block windows",
+      "schema": "chain-windows-v0"
+    },
+    {
+      "kind": "supply_snapshots",
+      "path": "supply_snapshots.csv",
+      "format": "csv",
+      "row_count": 2,
+      "checksum_sha256": "b3dcfeb6f8cd84281f1dc48657de0da90f445196709867c41348bd97bffa9997",
+      "description": "Pinned totalSupply snapshots per chain",
+      "schema": "supply-snapshots-v0"
+    },
+    {
+      "kind": "qa_report",
+      "path": "qa_report.json",
+      "format": "json",
+      "row_count": null,
+      "checksum_sha256": "49b2a58f3a5fd2b9433c586fa5d9ce111eb253cc8efed8596c061bdb7311df5f",
+      "description": "Per-chain QA gates (PASS/FAIL)"
+    },
+    {
+      "kind": "provenance",
+      "path": "provenance.json",
+      "format": "json",
+      "row_count": null,
+      "checksum_sha256": "d1a94eb4e77567f7fc78f0edfad332fa24e1d78f1cdac1f9c7efc2b492acd9a2",
+      "description": "Per-chain block windows and contract addresses"
+    },
+    {
+      "kind": "supply_audit",
+      "path": "supply_audit.csv",
+      "format": "csv",
+      "row_count": 1,
+      "checksum_sha256": "244be32e9162b6f9efc45a1b1f47c8bae2331d8db0ecd94965acfdadd678e5ea",
+      "description": "Mint/burn aggregate vs totalSupply delta per chain"
+    },
+    {
+      "kind": "supply_audit",
+      "path": "supply_audit.md",
+      "format": "markdown",
+      "row_count": null,
+      "checksum_sha256": "52b9de1b77d1b63adf43f1f41a95ec5eaed9e9b5d5448fd6b921c251e905edff",
+      "description": "Human-readable supply invariant report"
+    },
+    {
+      "kind": "summary",
+      "path": "summary.md",
+      "format": "markdown",
+      "row_count": null,
+      "checksum_sha256": "3ad94168ade4b29104d4236ee7bc08a6e851645660b7eca36c0e0eee31307067",
+      "description": "Transfer-audit run summary"
+    },
+    {
+      "kind": "other",
+      "path": "execution_log.ndjson",
+      "format": "other",
+      "row_count": null,
+      "checksum_sha256": "c68fcd910ab20d60f01295b9a9a7db5e27c4988d344d59191a99d59cb6d92ef5",
+      "description": "Local transfer-audit execution trace (NDJSON)",
+      "schema": "execution-log-v0"
+    }
+  ],
+  "source_snapshots": [
+    {
+      "source_name": "rpc:ethereum",
+      "source_url": null,
+      "retrieved_at": "2026-06-01T11:38:57.375048Z",
+      "window_start": "2025-12-13T00:06:11Z",
+      "window_end": "2025-12-13T00:26:11Z"
+    }
+  ],
+  "supported_claims": [
+    {
+      "claim": "transfer_activity_reconstructible",
+      "status": "conditional",
+      "statement": "Transfer logs in the configured block window were fetched and decoded for the scoped deployment(s).",
+      "evidence_artifacts": [
+        "canonical_transfers.csv",
+        "decoded_transfers.csv",
+        "qa_report.json"
+      ],
+      "limitations": [
+        "Holds only when RPC fetch and decode gates PASS for the configured asset, chain, and block window.",
+        "Transfers are not labeled by actor type or intent."
+      ],
+      "warnings": [],
+      "caveat": ""
+    },
+    {
+      "claim": "supply_snapshot_available",
+      "status": "conditional",
+      "statement": "Pinned totalSupply boundaries are available per chain for the audit window.",
+      "evidence_artifacts": [
+        "supply_snapshots.csv",
+        "supply_audit.csv",
+        "provenance.json",
+        "qa_report.json"
+      ],
+      "limitations": [
+        "Snapshots use toolkit totalSupply() calls at pinned blocks; not circulating supply across chains."
+      ],
+      "warnings": [],
+      "caveat": ""
+    },
+    {
+      "claim": "supply_reconciliation_available",
+      "status": "conditional",
+      "statement": "Mint/burn aggregates are compared to pinned totalSupply deltas per chain for the audit window.",
+      "evidence_artifacts": [
+        "supply_audit.csv",
+        "qa_report.json"
+      ],
+      "limitations": [
+        "Mint/burn sums use toolkit Transfer definitions (zero-address mint/burn).",
+        "FAIL is not proof of fraud."
+      ],
+      "warnings": [],
+      "caveat": ""
+    }
+  ],
+  "unsupported_claims": [
+    {
+      "claim": "circulating_supply_not_verified",
+      "status": "unsupported",
+      "statement": "Circulating supply across chains or through bridges is not verified by transfer-audit alone.",
+      "evidence_artifacts": [],
+      "limitations": [
+        "Per-chain totalSupply(end) is not circulating supply when inventory is bridged or held in custody.",
+        "Summing per-chain totals double-counts bridged inventory."
+      ],
+      "warnings": [],
+      "caveat": ""
+    },
+    {
+      "claim": "bridge_backing_not_verified_without_bridge_collateral",
+      "status": "unsupported",
+      "statement": "Bridge collateral, mint authority, and reserve backing are not verified without bridge-specific collateral evidence.",
+      "evidence_artifacts": [],
+      "limitations": [
+        "On-chain transfer-audit and cross-chain-summary compare scoped deployments only; bridge attestations and collateral reserve data are out of scope without a bridge-backing evidence source."
+      ],
+      "warnings": [],
+      "caveat": ""
+    },
+    {
+      "claim": "fiat_reserve_not_verified",
+      "status": "unsupported",
+      "statement": "Fiat reserve adequacy and bank attestation are not verified by on-chain transfer-audit evidence.",
+      "evidence_artifacts": [],
+      "limitations": [
+        "No bank or attestation data in this toolkit."
+      ],
+      "warnings": [],
+      "caveat": ""
+    },
+    {
+      "claim": "liquidity_exposure_not_measured",
+      "status": "unsupported",
+      "statement": "DEX pool depth, CEX liquidity, and oracle price exposure are not measured by this toolkit.",
+      "evidence_artifacts": [],
+      "limitations": [
+        "No DEX, CEX, or oracle depth series in transfer-audit or cross-chain-summary alone."
+      ],
+      "warnings": [],
+      "caveat": ""
+    },
+    {
+      "claim": "peg_stability",
+      "status": "unsupported",
+      "statement": "Peg or price stability is out of scope for transfer-audit.",
+      "evidence_artifacts": [],
+      "limitations": [
+        "Out of scope for transfer-audit; not attested by this toolkit."
+      ],
+      "warnings": [],
+      "caveat": ""
+    },
+    {
+      "claim": "redemption_capacity",
+      "status": "unsupported",
+      "statement": "Redemption capacity is out of scope for transfer-audit.",
+      "evidence_artifacts": [],
+      "limitations": [
+        "Out of scope for transfer-audit; not attested by this toolkit."
+      ],
+      "warnings": [],
+      "caveat": ""
+    },
+    {
+      "claim": "user_geography",
+      "status": "unsupported",
+      "statement": "User geography is out of scope for transfer-audit.",
+      "evidence_artifacts": [],
+      "limitations": [
+        "Out of scope for transfer-audit; not attested by this toolkit."
+      ],
+      "warnings": [],
+      "caveat": ""
+    },
+    {
+      "claim": "holder_identity",
+      "status": "unsupported",
+      "statement": "Holder identity is out of scope for transfer-audit.",
+      "evidence_artifacts": [],
+      "limitations": [
+        "Out of scope for transfer-audit; not attested by this toolkit."
+      ],
+      "warnings": [],
+      "caveat": ""
+    },
+    {
+      "claim": "actual_swap_routing",
+      "status": "unsupported",
+      "statement": "Actual swap routing is out of scope for transfer-audit.",
+      "evidence_artifacts": [],
+      "limitations": [
+        "Out of scope for transfer-audit; not attested by this toolkit."
+      ],
+      "warnings": [],
+      "caveat": ""
+    },
+    {
+      "claim": "issuer_intent",
+      "status": "unsupported",
+      "statement": "Issuer intent is out of scope for transfer-audit.",
+      "evidence_artifacts": [],
+      "limitations": [
+        "Out of scope for transfer-audit; not attested by this toolkit."
+      ],
+      "warnings": [],
+      "caveat": ""
+    },
+    {
+      "claim": "stress_transmission",
+      "status": "unsupported",
+      "statement": "Stress transmission is out of scope for transfer-audit.",
+      "evidence_artifacts": [],
+      "limitations": [
+        "Out of scope for transfer-audit; not attested by this toolkit."
+      ],
+      "warnings": [],
+      "caveat": ""
+    }
+  ],
+  "warnings": [],
+  "workflow_steps": [
+    {
+      "command": "transfer-audit",
+      "completed_at": "2026-06-01T11:38:57.375048Z",
+      "artifacts": [
+        "audit_plan.json",
+        "evidence_sources.json",
+        "deployment_registry.json",
+        "chain_windows.json",
+        "canonical_transfers.csv",
+        "supply_snapshots.csv",
+        "qa_report.json",
+        "provenance.json",
+        "supply_audit.csv",
+        "supply_audit.md",
+        "summary.md",
+        "decoded_transfers.csv",
+        "execution_log.ndjson"
+      ],
+      "warnings": []
+    }
+  ]
+}

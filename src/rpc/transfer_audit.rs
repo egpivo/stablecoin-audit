@@ -1,7 +1,7 @@
 //! Transfer-log audit: chunked `eth_getLogs`, decode, dedup, supply reconciliation.
 
 use alloy::eips::BlockNumberOrTag;
-use alloy::primitives::{Address, I256, U256};
+use alloy::primitives::{Address, U256};
 use alloy::providers::Provider;
 use alloy::rpc::types::{BlockId, BlockTransactionsKind};
 use alloy::sol;
@@ -11,19 +11,39 @@ use serde::{Deserialize, Serialize};
 use std::collections::HashSet;
 use std::str::FromStr;
 
+use crate::artifact::{
+    ensure_audit_plan,
+    transfer_audit_manifest::{ManifestChainInput, TransferAuditManifestParams},
+    write_transfer_audit_manifest, ExecutionLogWriter,
+};
+use crate::audit::supply::build_supply_metrics_from_events;
+use crate::audit::{write_canonical_audit_tables, CanonicalWriteParams};
 use crate::config::{load_single_token_config, TokenConfig};
-use crate::decode::{decode_transfer_log, dedup_transfer_events, sample_decode_qa};
+use crate::decode::{decode_transfer_log, sample_decode_qa};
 use crate::fetch::{fetch_transfer_logs_incremental, FetchParams};
-use crate::report::{default_run_id, ensure_run_out_dir, format_token_amount, validate_run_id};
+use crate::report::{default_run_id, ensure_run_out_dir_at, format_token_amount, validate_run_id};
 use crate::rpc::transfer_checkpoint::{
     self, ChainSpecRecord, CheckpointChainBundle, CheckpointManifest, FetchChunkProgress,
 };
 use crate::rpc::{build_provider, HttpProvider};
 use std::path::Path;
+use std::sync::Arc;
+
+fn exec_emit(
+    log: Option<&ExecutionLogWriter>,
+    level: &str,
+    event: &str,
+    stage: &str,
+    chain: Option<&str>,
+    message: impl AsRef<str>,
+) {
+    if let Some(w) = log {
+        let _ = w.emit(level, Some(event), Some(stage), chain, message.as_ref());
+    }
+}
 
 const DEFAULT_CHUNK_SIZE: u64 = 500;
 const QA_SAMPLE_SIZE: usize = 100;
-const ZERO_ADDR: &str = "0x0000000000000000000000000000000000000000";
 
 sol! {
     #[sol(rpc)]
@@ -80,43 +100,7 @@ pub struct QaGates {
     provenance_stamped: String,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct SupplyAuditRow {
-    chain: String,
-    chain_id: u64,
-    contract_address: String,
-    from_block: u64,
-    resolved_to_block: Option<u64>,
-    to_block_requested: String,
-    chunk_size: u64,
-    transfer_event_count: usize,
-    active_senders: usize,
-    active_recipients: usize,
-    mint_count: usize,
-    burn_count: usize,
-    plain_transfer_count: usize,
-    sum_mints_raw: String,
-    sum_burns_raw: String,
-    net_mint_raw: Option<String>,
-    total_supply_at_start_minus_1: Option<String>,
-    total_supply_at_start_minus_1_provenance: String,
-    total_supply_at_end: Option<String>,
-    onchain_delta_raw: Option<String>,
-    discrepancy_raw: Option<String>,
-    metadata_call_pass: bool,
-    historical_supply_pass: bool,
-    no_duplicate_logs_pass: Option<bool>,
-    transfer_decode_pass: Option<bool>,
-    supply_invariant_pass: Option<bool>,
-    duplicate_count: usize,
-    full_decode_error_count: usize,
-    /// Block header time for `from_block` (window start); not written to CSV.
-    #[serde(skip)]
-    window_start_block_timestamp_rfc3339: Option<String>,
-    /// Block header time for the resolved end block of the log window; not written to CSV.
-    #[serde(skip)]
-    window_end_block_timestamp_rfc3339: Option<String>,
-}
+pub use crate::audit::supply::SupplyAuditRow;
 
 pub(crate) fn gate_csv(pass: bool) -> &'static str {
     if pass {
@@ -132,24 +116,6 @@ pub(crate) fn gate_opt_csv(pass: Option<bool>) -> &'static str {
         Some(false) => "FAIL",
         None => "UNAVAILABLE",
     }
-}
-
-/// Mint/burn aggregates vs pinned `totalSupply` boundaries (signed I256).
-pub(crate) fn compute_supply_invariant(
-    sum_mints: U256,
-    sum_burns: U256,
-    supply_start: U256,
-    supply_end: U256,
-) -> (I256, I256, I256, bool) {
-    let net_mint = I256::from_raw(sum_mints) - I256::from_raw(sum_burns);
-    let onchain_delta = I256::from_raw(supply_end) - I256::from_raw(supply_start);
-    let discrepancy = net_mint - onchain_delta;
-    (
-        net_mint,
-        onchain_delta,
-        discrepancy,
-        discrepancy == I256::ZERO,
-    )
 }
 
 /// Parse `--window chain:from:to` (inclusive end block `to`, same convention as `--to-block`).
@@ -239,7 +205,38 @@ pub async fn run_per_chain_windows(
     run_id: Option<String>,
     fresh: bool,
 ) -> Result<()> {
-    run_inner(asset, RunMode::PerChain(windows), chunk_size, run_id, fresh).await
+    run_per_chain_windows_at(
+        std::path::Path::new("out"),
+        asset,
+        windows,
+        chunk_size,
+        run_id,
+        fresh,
+        None,
+    )
+    .await
+}
+
+/// Same as [`run_per_chain_windows`] but writes under `artifact_root` instead of `./out`.
+pub async fn run_per_chain_windows_at(
+    artifact_root: &std::path::Path,
+    asset: &str,
+    windows: Vec<(String, u64, u64)>,
+    chunk_size: Option<u64>,
+    run_id: Option<String>,
+    fresh: bool,
+    exec_log: Option<Arc<ExecutionLogWriter>>,
+) -> Result<()> {
+    run_inner_at(
+        artifact_root,
+        asset,
+        RunMode::PerChain(windows),
+        chunk_size,
+        run_id,
+        fresh,
+        exec_log,
+    )
+    .await
 }
 
 pub(crate) enum RunMode<'a> {
@@ -392,6 +389,27 @@ async fn run_inner(
     run_id: Option<String>,
     fresh: bool,
 ) -> Result<()> {
+    run_inner_at(
+        std::path::Path::new("out"),
+        asset,
+        mode,
+        chunk_size,
+        run_id,
+        fresh,
+        None,
+    )
+    .await
+}
+
+async fn run_inner_at(
+    artifact_root: &std::path::Path,
+    asset: &str,
+    mode: RunMode<'_>,
+    chunk_size: Option<u64>,
+    run_id: Option<String>,
+    fresh: bool,
+    exec_log: Option<Arc<ExecutionLogWriter>>,
+) -> Result<()> {
     let chunk_size = chunk_size.unwrap_or(DEFAULT_CHUNK_SIZE);
     let run_id = match run_id {
         Some(r) => {
@@ -400,8 +418,9 @@ async fn run_inner(
         }
         None => default_run_id(),
     };
-    let out_dir = ensure_run_out_dir(asset, &run_id)?;
+    let out_dir = ensure_run_out_dir_at(artifact_root, asset, &run_id)?;
     let plan = build_run_plan(mode)?;
+    let log_ref = exec_log.as_deref();
 
     if fresh {
         transfer_checkpoint::clear_checkpoint_dir(&out_dir)?;
@@ -481,6 +500,7 @@ async fn run_inner(
             &task.to_block_requested,
             &generated_at,
             &out_dir,
+            log_ref,
         )
         .await;
 
@@ -519,6 +539,26 @@ async fn run_inner(
     pairs.sort_by(|a, b| a.0.chain.cmp(&b.0.chain));
     let (supply_rows, qa_chains): (Vec<_>, Vec<_>) = pairs.into_iter().unzip();
 
+    let manifest_params = transfer_audit_manifest_params(
+        asset,
+        &run_id,
+        &generated_at,
+        plan.per_chain_spans,
+        &provenance,
+        &supply_rows,
+        &qa_chains,
+    );
+    ensure_audit_plan(&out_dir, &manifest_params)?;
+
+    exec_emit(
+        log_ref,
+        "info",
+        "artifacts_written",
+        "writing_artifacts",
+        None,
+        "writing run artifacts (CSV, QA report, provenance)",
+    );
+
     write_run_artifacts(
         &out_dir,
         asset,
@@ -538,12 +578,7 @@ async fn run_inner(
         out_dir.display()
     );
     println!(
-        "  decoded_transfers.csv, supply_audit.csv, supply_audit.md, qa_report.json,\n  provenance.json, summary.md"
-    );
-    println!(
-        "\nNext (≥2 chains): cargo run -- cross-chain-summary --asset {} --run-id {}",
-        asset.to_uppercase(),
-        run_id
+        "  decoded_transfers.csv, supply_audit.csv, supply_audit.md, qa_report.json,\n  provenance.json, summary.md, audit_plan.json,\n  evidence_sources.json, deployment_registry.json, chain_windows.json,\n  canonical_transfers.csv, supply_snapshots.csv"
     );
 
     if any_hard_error {
@@ -552,13 +587,31 @@ async fn run_inner(
             out_dir.display()
         );
         anyhow::bail!(
-            "one or more chains had hard errors; partial outputs written under {}",
+            "one or more chains had hard errors; partial outputs written under {} (no artifact_manifest.json — run not API-listed until successful)",
             out_dir.display()
         );
     }
 
     transfer_checkpoint::remove_checkpoint_dir(&out_dir)?;
-    println!("Checkpoint cleared (run completed successfully).");
+    println!("Checkpoint cleared.");
+
+    write_transfer_audit_manifest(&out_dir, &manifest_params)?;
+    exec_emit(
+        log_ref,
+        "info",
+        "manifest_written",
+        "writing_manifest",
+        None,
+        "artifact_manifest.json written",
+    );
+    crate::audit::validate_transfer_audit_product_run(&out_dir)?;
+
+    println!("  artifact_manifest.json (product run complete — discoverable via API)");
+    println!(
+        "\nNext (≥2 chains): cargo run -- cross-chain-summary --asset {} --run-id {}",
+        asset.to_uppercase(),
+        run_id
+    );
 
     Ok(())
 }
@@ -731,94 +784,6 @@ can be read side-by-side for the same asset symbol.\n",
     Ok(())
 }
 
-/// Deduped transfer aggregates and supply-invariant fields (no RPC).
-pub(crate) struct SupplyMetrics {
-    pub deduped: Vec<crate::decode::TransferEvent>,
-    pub duplicate_count: usize,
-    pub mint_count: usize,
-    pub burn_count: usize,
-    pub plain_transfer_count: usize,
-    pub active_senders: usize,
-    pub active_recipients: usize,
-    pub sum_mints: U256,
-    pub sum_burns: U256,
-    pub net_mint: Option<I256>,
-    pub onchain_delta: Option<I256>,
-    pub discrepancy: Option<I256>,
-    pub supply_invariant_pass: Option<bool>,
-    pub no_duplicate_logs_pass: bool,
-    pub transfer_decode_pass: bool,
-}
-
-pub(crate) fn build_supply_metrics_from_events(
-    events: Vec<crate::decode::TransferEvent>,
-    decode_errors: usize,
-    supply_start: Option<U256>,
-    supply_end: Option<U256>,
-) -> SupplyMetrics {
-    let (deduped, dup_count) = dedup_transfer_events(events);
-
-    let mint_count = deduped.iter().filter(|e| e.kind == "mint").count();
-    let burn_count = deduped.iter().filter(|e| e.kind == "burn").count();
-    let plain_transfer_count = deduped.iter().filter(|e| e.kind == "transfer").count();
-
-    let mut senders: HashSet<String> = HashSet::new();
-    let mut recipients: HashSet<String> = HashSet::new();
-    for e in &deduped {
-        if e.from != ZERO_ADDR {
-            senders.insert(e.from.clone());
-        }
-        if e.to != ZERO_ADDR {
-            recipients.insert(e.to.clone());
-        }
-    }
-
-    let sum_mints: U256 = deduped
-        .iter()
-        .filter(|e| e.kind == "mint")
-        .fold(U256::ZERO, |acc, e| acc + e.value_u256);
-    let sum_burns: U256 = deduped
-        .iter()
-        .filter(|e| e.kind == "burn")
-        .fold(U256::ZERO, |acc, e| acc + e.value_u256);
-
-    let (net_mint_opt, onchain_delta_opt, discrepancy_opt, invariant_pass) = if decode_errors > 0 {
-        (None, None, None, None)
-    } else {
-        match (supply_start, supply_end) {
-            (Some(start), Some(end)) => {
-                let (net_mint, onchain_delta, discrepancy, pass) =
-                    compute_supply_invariant(sum_mints, sum_burns, start, end);
-                (
-                    Some(net_mint),
-                    Some(onchain_delta),
-                    Some(discrepancy),
-                    Some(pass),
-                )
-            }
-            _ => (None, None, None, None),
-        }
-    };
-
-    SupplyMetrics {
-        deduped,
-        duplicate_count: dup_count,
-        mint_count,
-        burn_count,
-        plain_transfer_count,
-        active_senders: senders.len(),
-        active_recipients: recipients.len(),
-        sum_mints,
-        sum_burns,
-        net_mint: net_mint_opt,
-        onchain_delta: onchain_delta_opt,
-        discrepancy: discrepancy_opt,
-        supply_invariant_pass: invariant_pass,
-        no_duplicate_logs_pass: dup_count == 0,
-        transfer_decode_pass: decode_errors == 0,
-    }
-}
-
 /// Write transfer-audit artifacts (CSV/MD/JSON) for a completed run.
 #[allow(clippy::too_many_arguments)]
 pub(crate) fn write_run_artifacts(
@@ -882,7 +847,58 @@ pub(crate) fn write_run_artifacts(
         supply_rows,
         qa_chains,
     )?;
+    write_canonical_audit_tables(
+        out_dir,
+        &CanonicalWriteParams {
+            asset,
+            run_id,
+            captured_at: generated_at,
+            events: all_events,
+            supply_rows,
+        },
+    )?;
     Ok(())
+}
+
+fn transfer_audit_manifest_params(
+    asset: &str,
+    run_id: &str,
+    generated_at: &str,
+    per_chain_spans: bool,
+    provenance: &ProvenanceBlock,
+    supply_rows: &[SupplyAuditRow],
+    qa_chains: &[QaChain],
+) -> TransferAuditManifestParams {
+    let mut warnings = Vec::new();
+    let chains: Vec<ManifestChainInput> = supply_rows
+        .iter()
+        .zip(qa_chains.iter())
+        .map(|(row, qa)| {
+            for err in &qa.errors {
+                warnings.push(format!("{}: {err}", row.chain));
+            }
+            ManifestChainInput {
+                chain: row.chain.clone(),
+                contract_address: row.contract_address.clone(),
+                from_block: row.from_block,
+                to_block_requested: row.to_block_requested.clone(),
+                window_start_rfc3339: row.window_start_block_timestamp_rfc3339.clone(),
+                window_end_rfc3339: row.window_end_block_timestamp_rfc3339.clone(),
+                errors: qa.errors.clone(),
+            }
+        })
+        .collect();
+
+    TransferAuditManifestParams {
+        asset: asset.to_string(),
+        run_id: run_id.to_string(),
+        generated_at: generated_at.to_string(),
+        per_chain_spans,
+        provenance_from_block: provenance.from_block,
+        provenance_to_block_requested: provenance.to_block_requested.clone(),
+        chains,
+        warnings,
+    }
 }
 
 #[allow(clippy::too_many_arguments)]
@@ -895,6 +911,7 @@ pub(crate) async fn process_chain(
     to_block_raw: &str,
     generated_at: &str,
     out_dir: &Path,
+    exec_log: Option<&ExecutionLogWriter>,
 ) -> (
     Vec<crate::decode::TransferEvent>,
     SupplyAuditRow,
@@ -1051,6 +1068,8 @@ pub(crate) async fn process_chain(
             total_supply_at_start_minus_1: None,
             total_supply_at_start_minus_1_provenance: "skipped".into(),
             total_supply_at_end: None,
+            total_supply_start_raw: None,
+            total_supply_end_raw: None,
             onchain_delta_raw: None,
             discrepancy_raw: None,
             metadata_call_pass,
@@ -1060,6 +1079,7 @@ pub(crate) async fn process_chain(
             supply_invariant_pass: None,
             duplicate_count: 0,
             full_decode_error_count: 0,
+            total_supply_start_block_timestamp_rfc3339: None,
             window_start_block_timestamp_rfc3339: None,
             window_end_block_timestamp_rfc3339: None,
         };
@@ -1113,13 +1133,23 @@ pub(crate) async fn process_chain(
 
     let historical_supply_pass = supply_start.is_some() && supply_end.is_some();
 
-    let (win_start_ts, win_end_ts) = if skip_rpc {
-        (None, None)
+    let (win_start_ts, win_end_ts, start_supply_block_ts) = if skip_rpc {
+        (None, None, None)
     } else {
-        (
-            block_window_timestamp_rfc3339(&provider, from_block).await,
-            block_window_timestamp_rfc3339(&provider, end_blk).await,
-        )
+        let win_start = block_window_timestamp_rfc3339(&provider, from_block).await;
+        let win_end = block_window_timestamp_rfc3339(&provider, end_blk).await;
+        let start_supply_ts = if supply_start.is_some() {
+            if start_minus_1 == 0 {
+                block_window_timestamp_rfc3339(&provider, 0).await
+            } else if supply_start_provenance == "on-chain" {
+                block_window_timestamp_rfc3339(&provider, start_minus_1).await
+            } else {
+                None
+            }
+        } else {
+            None
+        };
+        (win_start, win_end, start_supply_ts)
     };
 
     let params = FetchParams {
@@ -1159,6 +1189,7 @@ pub(crate) async fn process_chain(
                 effective_decimals,
                 &win_start_ts,
                 &win_end_ts,
+                start_supply_block_ts.clone(),
             );
             let qa = build_qa_chain(&supply, generated_at, &errors);
             return (empty_events, supply, qa, hard_error);
@@ -1191,6 +1222,19 @@ pub(crate) async fn process_chain(
                     p.chunks_done,
                     p.total_chunks
                 );
+                exec_emit(
+                    exec_log,
+                    "info",
+                    "chain_fetch_start",
+                    "fetching_logs",
+                    Some(chain),
+                    format!(
+                        "resuming Transfer log fetch from block {} (chunk {}/{})",
+                        p.resume_from_block(),
+                        p.chunks_done,
+                        p.total_chunks
+                    ),
+                );
                 e
             }
             Err(e) => {
@@ -1207,6 +1251,16 @@ pub(crate) async fn process_chain(
             end_blk,
             chunk_size,
             total_chunks
+        );
+        exec_emit(
+            exec_log,
+            "info",
+            "chain_fetch_start",
+            "fetching_logs",
+            Some(chain),
+            format!(
+                "fetching Transfer logs block {from_block} → {end_blk} (chunk {chunk_size}, {total_chunks} chunks)"
+            ),
         );
         Vec::new()
     };
@@ -1227,6 +1281,7 @@ pub(crate) async fn process_chain(
             effective_decimals,
             &win_start_ts,
             &win_end_ts,
+            start_supply_block_ts.clone(),
         );
         let qa = build_qa_chain(&supply, generated_at, &errors);
         return (empty_events, supply, qa, true);
@@ -1246,6 +1301,7 @@ pub(crate) async fn process_chain(
         let chain_upper = chain.to_uppercase();
         let out_owned = out_dir.to_path_buf();
         let chain_owned = chain.to_string();
+        let log_fetch = exec_log.cloned();
 
         let fetch_result = fetch_transfer_logs_incremental(
             &provider,
@@ -1260,6 +1316,17 @@ pub(crate) async fn process_chain(
                     start,
                     end,
                     logs.len()
+                );
+                exec_emit(
+                    log_fetch.as_ref(),
+                    "info",
+                    "fetch_chunk_complete",
+                    "fetching_logs",
+                    Some(&chain_owned),
+                    format!(
+                        "fetch chunk {chunks_done}/{total_chunks} blocks {start}..{end} ({} logs)",
+                        logs.len()
+                    ),
                 );
 
                 if !qa_sample_done && !logs.is_empty() {
@@ -1335,6 +1402,7 @@ pub(crate) async fn process_chain(
                 effective_decimals,
                 &win_start_ts,
                 &win_end_ts,
+                start_supply_block_ts.clone(),
             );
             let qa = build_qa_chain(&supply, generated_at, &errors);
             return (empty_events, supply, qa, true);
@@ -1347,6 +1415,17 @@ pub(crate) async fn process_chain(
         chain.to_uppercase(),
         raw_count,
         events.len()
+    );
+    exec_emit(
+        exec_log,
+        "info",
+        "decode_complete",
+        "decoding_dedup",
+        Some(chain),
+        format!(
+            "received {raw_count} raw logs ({} decoded rows before dedup)",
+            events.len()
+        ),
     );
 
     if decode_errors > 5 {
@@ -1382,12 +1461,40 @@ pub(crate) async fn process_chain(
         burn_count,
         plain_transfer_count,
     );
+    exec_emit(
+        exec_log,
+        "info",
+        "dedup_complete",
+        "decoding_dedup",
+        Some(chain),
+        format!(
+            "{raw_count} logs → {} unique (dup: {dup_count})",
+            deduped.len()
+        ),
+    );
     println!(
         "[{}] no_dup: {}  all_decode: {}  supply_invariant: {}",
         chain.to_uppercase(),
         gate(no_dup_pass),
         gate(all_decode_pass),
         inv_label,
+    );
+    let qa_level = match invariant_pass {
+        Some(true) => "pass",
+        Some(false) => "fail",
+        None => "warn",
+    };
+    exec_emit(
+        exec_log,
+        qa_level,
+        "qa_gate_result",
+        "checking_supply",
+        Some(chain),
+        format!(
+            "supply_invariant: {inv_label} (no_dup: {}, all_decode: {})",
+            gate(no_dup_pass),
+            gate(all_decode_pass)
+        ),
     );
     if let (Some(nm), Some(od), Some(disc)) = (net_mint_opt, onchain_delta_opt, discrepancy_opt) {
         println!(
@@ -1421,6 +1528,8 @@ pub(crate) async fn process_chain(
         total_supply_at_start_minus_1: supply_start.map(fmt_u256),
         total_supply_at_start_minus_1_provenance: supply_start_provenance.clone(),
         total_supply_at_end: supply_end.map(fmt_u256),
+        total_supply_start_raw: supply_start.map(|u| u.to_string()),
+        total_supply_end_raw: supply_end.map(|u| u.to_string()),
         onchain_delta_raw: onchain_delta_opt.map(|v| v.to_string()),
         discrepancy_raw: discrepancy_opt.map(|v| v.to_string()),
         metadata_call_pass,
@@ -1430,6 +1539,7 @@ pub(crate) async fn process_chain(
         supply_invariant_pass: invariant_pass,
         duplicate_count: dup_count,
         full_decode_error_count: decode_errors,
+        total_supply_start_block_timestamp_rfc3339: start_supply_block_ts,
         window_start_block_timestamp_rfc3339: win_start_ts,
         window_end_block_timestamp_rfc3339: win_end_ts,
     };
@@ -1455,6 +1565,7 @@ pub(crate) fn partial_supply_after_fetch_fail(
     effective_decimals: u8,
     win_start_ts: &Option<String>,
     win_end_ts: &Option<String>,
+    total_supply_start_block_timestamp_rfc3339: Option<String>,
 ) -> SupplyAuditRow {
     SupplyAuditRow {
         chain: chain.to_string(),
@@ -1477,6 +1588,8 @@ pub(crate) fn partial_supply_after_fetch_fail(
             .map(|u| format_token_amount(u, effective_decimals)),
         total_supply_at_start_minus_1_provenance: supply_start_provenance.to_string(),
         total_supply_at_end: supply_end.map(|u| format_token_amount(u, effective_decimals)),
+        total_supply_start_raw: supply_start.map(|u| u.to_string()),
+        total_supply_end_raw: supply_end.map(|u| u.to_string()),
         onchain_delta_raw: None,
         discrepancy_raw: None,
         metadata_call_pass,
@@ -1488,6 +1601,7 @@ pub(crate) fn partial_supply_after_fetch_fail(
         full_decode_error_count: 0,
         window_start_block_timestamp_rfc3339: win_start_ts.clone(),
         window_end_block_timestamp_rfc3339: win_end_ts.clone(),
+        total_supply_start_block_timestamp_rfc3339,
     }
 }
 
@@ -1517,6 +1631,8 @@ pub(crate) fn failed_supply_row(
         total_supply_at_start_minus_1: None,
         total_supply_at_start_minus_1_provenance: "skipped".into(),
         total_supply_at_end: None,
+        total_supply_start_raw: None,
+        total_supply_end_raw: None,
         onchain_delta_raw: None,
         discrepancy_raw: None,
         metadata_call_pass: false,
@@ -1526,6 +1642,7 @@ pub(crate) fn failed_supply_row(
         supply_invariant_pass: None,
         duplicate_count: 0,
         full_decode_error_count: 0,
+        total_supply_start_block_timestamp_rfc3339: None,
         window_start_block_timestamp_rfc3339: None,
         window_end_block_timestamp_rfc3339: None,
     }
@@ -1675,6 +1792,7 @@ They are **not** estimates of total token holders or a full holder reconstructio
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::audit::supply::compute_supply_invariant;
     use alloy::primitives::{I256, U256};
     use std::path::PathBuf;
 
@@ -1850,6 +1968,8 @@ mod tests {
             total_supply_at_start_minus_1: Some("1.000000".into()),
             total_supply_at_start_minus_1_provenance: "on-chain".into(),
             total_supply_at_end: Some("2.000000".into()),
+            total_supply_start_raw: Some("1000000".into()),
+            total_supply_end_raw: Some("2000000".into()),
             onchain_delta_raw: Some("1000".into()),
             discrepancy_raw: Some("0".into()),
             metadata_call_pass: true,
@@ -1859,6 +1979,7 @@ mod tests {
             supply_invariant_pass: Some(true),
             duplicate_count: 0,
             full_decode_error_count: 0,
+            total_supply_start_block_timestamp_rfc3339: None,
             window_start_block_timestamp_rfc3339: None,
             window_end_block_timestamp_rfc3339: None,
         };
@@ -1873,13 +1994,18 @@ mod tests {
             100,
             Some("200".into()),
             &[ev],
-            &[supply],
-            &[qa],
+            std::slice::from_ref(&supply),
+            std::slice::from_ref(&qa),
         )
         .unwrap();
         for f in [
             "decoded_transfers.csv",
+            "canonical_transfers.csv",
             "supply_audit.csv",
+            "supply_snapshots.csv",
+            "evidence_sources.json",
+            "deployment_registry.json",
+            "chain_windows.json",
             "supply_audit.md",
             "qa_report.json",
             "provenance.json",
@@ -1887,6 +2013,30 @@ mod tests {
         ] {
             assert!(out.join(f).is_file(), "missing {f}");
         }
+        assert!(
+            !out.join("artifact_manifest.json").exists(),
+            "manifest is written only after a successful run, not in write_run_artifacts"
+        );
+        let provenance = ProvenanceBlock {
+            from_block: 100,
+            to_block_requested: Some("200".into()),
+            generated_at: "2026-01-01T00:00:00Z".into(),
+            per_chain_spans: false,
+        };
+        crate::artifact::write_transfer_audit_manifest(
+            &out,
+            &transfer_audit_manifest_params(
+                "USDC",
+                "run_test",
+                "2026-01-01T00:00:00Z",
+                false,
+                &provenance,
+                std::slice::from_ref(&supply),
+                std::slice::from_ref(&qa),
+            ),
+        )
+        .unwrap();
+        assert!(out.join("artifact_manifest.json").is_file());
         let _ = std::fs::remove_dir_all(&out);
     }
 
@@ -1902,6 +2052,7 @@ mod tests {
             "200",
             "2026-01-01T00:00:00Z",
             &out,
+            None,
         )
         .await;
         assert!(hard);
@@ -1926,6 +2077,7 @@ mod tests {
             "200",
             "2026-01-01T00:00:00Z",
             &out,
+            None,
         )
         .await;
         assert!(hard);
@@ -1955,6 +2107,7 @@ mod tests {
             "24001000",
             "2026-01-01T00:00:00Z",
             &out,
+            None,
         )
         .await;
         assert!(hard);
@@ -1987,6 +2140,7 @@ mod tests {
             6,
             &None,
             &None,
+            None,
         );
         assert_eq!(row.resolved_to_block, Some(200));
         assert!(row.total_supply_at_end.is_some());
@@ -2038,6 +2192,8 @@ mod tests {
                 total_supply_at_start_minus_1: Some("1.000000".into()),
                 total_supply_at_start_minus_1_provenance: "on-chain".into(),
                 total_supply_at_end: Some("1.000000".into()),
+                total_supply_start_raw: Some("1000000".into()),
+                total_supply_end_raw: Some("1000000".into()),
                 onchain_delta_raw: Some("0".into()),
                 discrepancy_raw: Some("0".into()),
                 metadata_call_pass: true,
@@ -2047,6 +2203,7 @@ mod tests {
                 supply_invariant_pass: Some(true),
                 duplicate_count: 0,
                 full_decode_error_count: 0,
+                total_supply_start_block_timestamp_rfc3339: None,
                 window_start_block_timestamp_rfc3339: None,
                 window_end_block_timestamp_rfc3339: None,
             };
@@ -2069,6 +2226,10 @@ mod tests {
         assert!(out.join("qa_report.json").is_file());
         assert!(out.join("supply_audit.csv").is_file());
         assert!(out.join("summary.md").is_file());
+        assert!(
+            out.join("artifact_manifest.json").is_file(),
+            "successful run must write product manifest for API discovery"
+        );
         let _ = std::fs::remove_dir_all(&out);
     }
 
@@ -2090,6 +2251,7 @@ mod tests {
             "24000100",
             "2026-01-01T00:00:00Z",
             &out,
+            None,
         )
         .await;
         assert!(!hard);
@@ -2104,5 +2266,139 @@ mod tests {
             std::env::remove_var(key);
         }
         let _ = std::fs::remove_dir_all(&out);
+    }
+
+    /// End-to-end: successful `transfer-audit` → `artifact_manifest.json` → read-only API discovery.
+    #[cfg(feature = "api")]
+    #[tokio::test]
+    async fn e2e_transfer_audit_success_discovered_by_api() {
+        use std::collections::HashSet;
+
+        use axum::body::Body;
+        use axum::http::{Request, StatusCode};
+        use tower::ServiceExt;
+
+        use crate::api::{router, ArtifactStore};
+        use crate::report::ensure_run_out_dir;
+
+        let run_id = format!("e2e_api_success_{}", std::process::id());
+        let partial_id = format!("e2e_api_partial_{}", std::process::id());
+        let success_dir = ensure_run_out_dir("USDC", &run_id).unwrap();
+        let _ = std::fs::remove_dir_all(&success_dir);
+
+        let specs = vec![
+            ChainSpecRecord {
+                chain: "ethereum".into(),
+                from_block: 100,
+                to_block_requested: "200".into(),
+            },
+            ChainSpecRecord {
+                chain: "base".into(),
+                from_block: 300,
+                to_block_requested: "400".into(),
+            },
+        ];
+        let mut ckpt = CheckpointManifest::new(
+            "USDC",
+            &run_id,
+            "2026-05-15T08:00:00+00:00",
+            500,
+            true,
+            specs,
+        );
+        for (chain, from, to, chain_id) in [("ethereum", 100u64, 200, 1), ("base", 300, 400, 8453)]
+        {
+            let supply = SupplyAuditRow {
+                chain: chain.into(),
+                chain_id,
+                contract_address: format!("0x{chain}"),
+                from_block: from,
+                resolved_to_block: Some(to),
+                to_block_requested: to.to_string(),
+                chunk_size: 500,
+                transfer_event_count: 0,
+                active_senders: 0,
+                active_recipients: 0,
+                mint_count: 0,
+                burn_count: 0,
+                plain_transfer_count: 0,
+                sum_mints_raw: "0".into(),
+                sum_burns_raw: "0".into(),
+                net_mint_raw: Some("0".into()),
+                total_supply_at_start_minus_1: Some("1.000000".into()),
+                total_supply_at_start_minus_1_provenance: "on-chain".into(),
+                total_supply_at_end: Some("1.000000".into()),
+                total_supply_start_raw: Some("1000000".into()),
+                total_supply_end_raw: Some("1000000".into()),
+                onchain_delta_raw: Some("0".into()),
+                discrepancy_raw: Some("0".into()),
+                metadata_call_pass: true,
+                historical_supply_pass: true,
+                no_duplicate_logs_pass: Some(true),
+                transfer_decode_pass: Some(true),
+                supply_invariant_pass: Some(true),
+                duplicate_count: 0,
+                full_decode_error_count: 0,
+                total_supply_start_block_timestamp_rfc3339: None,
+                window_start_block_timestamp_rfc3339: None,
+                window_end_block_timestamp_rfc3339: None,
+            };
+            let qa = build_qa_chain(&supply, "2026-05-15T08:00:00+00:00", &[]);
+            let bundle = CheckpointChainBundle { supply, qa };
+            transfer_checkpoint::save_completed_chain(&success_dir, &mut ckpt, chain, &[], &bundle)
+                .unwrap();
+        }
+
+        run_per_chain_windows(
+            "USDC",
+            vec![("ethereum".into(), 100, 200), ("base".into(), 300, 400)],
+            None,
+            Some(run_id.clone()),
+            false,
+        )
+        .await
+        .unwrap();
+
+        assert!(
+            success_dir.join("artifact_manifest.json").is_file(),
+            "successful transfer-audit must write artifact_manifest.json"
+        );
+
+        let partial_dir = ensure_run_out_dir("USDC", &partial_id).unwrap();
+        let _ = std::fs::remove_dir_all(&partial_dir);
+        std::fs::create_dir_all(&partial_dir).unwrap();
+        std::fs::write(partial_dir.join("qa_report.json"), r#"{"asset":"USDC"}"#).unwrap();
+        std::fs::write(partial_dir.join("supply_audit.csv"), "chain\n").unwrap();
+        assert!(!partial_dir.join("artifact_manifest.json").exists());
+
+        let store = ArtifactStore::open("out").unwrap();
+        let runs = store.list_runs().unwrap();
+        let listed: HashSet<String> = runs.into_iter().map(|r| r.run_id).collect();
+        assert!(
+            listed.contains(&run_id),
+            "GET /api/runs must list successful manifest-backed run"
+        );
+        assert!(
+            !listed.contains(&partial_id),
+            "partial run without artifact_manifest.json must not be listed"
+        );
+
+        let app = router(store);
+        let manifest_uri = format!("/api/runs/{run_id}/manifest?asset=USDC");
+        let response = app
+            .oneshot(Request::get(&manifest_uri).body(Body::empty()).unwrap())
+            .await
+            .unwrap();
+        assert_eq!(response.status(), StatusCode::OK);
+        let body = axum::body::to_bytes(response.into_body(), usize::MAX)
+            .await
+            .unwrap();
+        let manifest: crate::artifact::ArtifactManifest = serde_json::from_slice(&body).unwrap();
+        assert_eq!(manifest.command, "transfer-audit");
+        assert_eq!(manifest.asset.as_deref(), Some("USDC"));
+        assert_eq!(manifest.run_id.as_deref(), Some(run_id.as_str()));
+
+        let _ = std::fs::remove_dir_all(&success_dir);
+        let _ = std::fs::remove_dir_all(&partial_dir);
     }
 }

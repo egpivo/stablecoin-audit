@@ -1,0 +1,31 @@
+{
+  "schema": "evidence-sources-v0",
+  "sources": [
+    {
+      "source_id": "article_ui_demo:rpc:ethereum:transfer_logs",
+      "source_type": "rpc",
+      "chain": "ethereum",
+      "chain_id": 1,
+      "provider_name": "alchemy_ethereum",
+      "block_range": {
+        "start_block": 24000000,
+        "end_block": 24000100
+      },
+      "timestamp_range": {
+        "start": "2025-12-13T00:06:11Z",
+        "end": "2025-12-13T00:26:11Z"
+      },
+      "captured_at": "2026-06-01T11:38:57.375048Z",
+      "notes": "eth_getLogs Transfer events in audit window"
+    },
+    {
+      "source_id": "article_ui_demo:contract_call:ethereum:totalSupply",
+      "source_type": "contract_call",
+      "chain": "ethereum",
+      "chain_id": 1,
+      "provider_name": "alchemy_ethereum",
+      "captured_at": "2026-06-01T11:38:57.375048Z",
+      "notes": "totalSupply() at pinned window boundaries"
+    }
+  ]
+}

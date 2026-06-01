@@ -90,3 +90,30 @@ cargo run -- stablecoin-map-package --skip-network
 ```
 
 Generated map-package outputs land in `data/benchmarks/`: `global_stablecoin_inventory_v1.csv`, `stablecoin_transfer_volume_selected_rails_v1.csv`, `stablecoin_dependency_summary.csv`, and `stablecoin_dependency_edges.csv`.
+
+## Product architecture (toolkit, not dashboard)
+
+This repo is a **reproducible evidence toolkit** (Rust CLI + filesystem artifacts), not a hosted risk dashboard. Layered design and roadmap: [`docs/product/backend_architecture_v0.md`](docs/product/backend_architecture_v0.md). Manifest schema: [`docs/product/artifact_manifest_schema_v0.md`](docs/product/artifact_manifest_schema_v0.md). Read-only evidence API (v0.3 skeleton): `cargo run --features api -- serve --artifact-root out/`.
+
+## Evidence browser
+
+Minimal local UI for inspecting completed runs — claim boundaries, artifacts, and package actions. Served by the API at `/ui/`; no separate frontend build.
+
+```bash
+# After at least one successful transfer-audit run under out/
+cargo run --features api -- serve --artifact-root out/
+open http://127.0.0.1:8080/ui/
+```
+
+Details: [`docs/product/evidence_browser_v0.md`](docs/product/evidence_browser_v0.md).
+
+### GitHub Pages demo (read-only)
+
+A **static public demo** uses dummy run id `github_pages_demo` and recorded artifacts under `docs/demo-artifacts/` (no RPC, no new audits). Regenerate after changing the UI or demo bundle:
+
+```bash
+python3 scripts/export_github_pages_demo.py
+# requires a completed run under out/usdc/runs/ (default source: article_ui_demo)
+```
+
+Enable **Settings → Pages → Deploy from branch `main`, folder `/docs`**. Open `https://<org>.github.io/stablecoin-audit/ui/`. See [`docs/GITHUB_PAGES.md`](docs/GITHUB_PAGES.md).

@@ -7,6 +7,7 @@ use serde::{Deserialize, Serialize};
 use std::collections::{HashMap, HashSet};
 use std::path::Path;
 
+use crate::artifact::{upsert_cross_chain_summary_manifest, CrossChainSummaryManifestParams};
 use crate::report::{ensure_run_out_dir, validate_run_id};
 
 #[derive(Debug, Deserialize)]
@@ -494,6 +495,15 @@ pub fn run(asset: &str, run_id: &str) -> Result<()> {
     )?;
     write_markdown(&md_path, &summary)?;
 
+    let summary_warnings = summary.warnings.clone();
+    upsert_cross_chain_summary_manifest(
+        &out_dir,
+        &CrossChainSummaryManifestParams {
+            completed_at: generated_at.clone(),
+            warnings: summary_warnings,
+        },
+    )?;
+
     println!(
         "\n=== Cross-chain summary ({}) — run `{}` — {} chains ===",
         norm_asset(asset),
@@ -506,6 +516,7 @@ pub fn run(asset: &str, run_id: &str) -> Result<()> {
     println!("\nWritten:");
     println!("  {}", json_path.display());
     println!("  {}", md_path.display());
+    println!("  {}", out_dir.join("artifact_manifest.json").display());
 
     Ok(())
 }
@@ -703,5 +714,166 @@ mod tests {
         );
         supply.insert("base".into(), sample_supply_row("base", 30, 40, "2"));
         validate_provenance_window(&qa, &supply).unwrap();
+    }
+
+    fn remove_run_path_if_present(path: &std::path::Path) {
+        if path.is_dir() {
+            let _ = std::fs::remove_dir_all(path);
+        } else if path.is_file() {
+            let _ = std::fs::remove_file(path);
+        }
+    }
+
+    fn write_minimal_transfer_audit_manifest(out: &std::path::Path, run_id: &str) {
+        use crate::artifact::{
+            build_transfer_audit_manifest, write_manifest, TransferAuditManifestParams,
+        };
+        std::fs::write(out.join("decoded_transfers.csv"), "chain\n").unwrap();
+        std::fs::write(
+            out.join("provenance.json"),
+            r#"{"schema":"transfer-audit-provenance-v1"}"#,
+        )
+        .unwrap();
+        std::fs::write(out.join("summary.md"), "# summary").unwrap();
+        std::fs::write(out.join("supply_audit.md"), "# supply").unwrap();
+        let params = TransferAuditManifestParams {
+            asset: "USDC".into(),
+            run_id: run_id.to_string(),
+            generated_at: "2026-05-15T08:00:00+00:00".into(),
+            per_chain_spans: false,
+            provenance_from_block: 24996368,
+            provenance_to_block_requested: Some("25046605".into()),
+            chains: vec![],
+            warnings: vec![],
+        };
+        let manifest = build_transfer_audit_manifest(out, &params).unwrap();
+        write_manifest(out, &manifest).unwrap();
+    }
+
+    fn seed_transfer_audit_run(out: &std::path::Path, run_id: &str) {
+        let fixture = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+            .join("docs/benchmarks/usdc_7d_20260501_20260508");
+        std::fs::copy(
+            fixture.join("supply_audit.csv"),
+            out.join("supply_audit.csv"),
+        )
+        .unwrap();
+        let mut qa: serde_json::Value =
+            serde_json::from_str(&std::fs::read_to_string(fixture.join("qa_report.json")).unwrap())
+                .unwrap();
+        qa["run_id"] = serde_json::Value::String(run_id.to_string());
+        std::fs::write(
+            out.join("qa_report.json"),
+            serde_json::to_string_pretty(&qa).unwrap(),
+        )
+        .unwrap();
+        write_minimal_transfer_audit_manifest(out, run_id);
+    }
+
+    #[test]
+    fn run_upserts_artifact_manifest() {
+        let run_id = format!(
+            "cc_run_manifest_{}_{}",
+            std::process::id(),
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap()
+                .as_nanos()
+        );
+        let run_path = std::path::Path::new("out")
+            .join("usdc")
+            .join("runs")
+            .join(&run_id);
+        remove_run_path_if_present(&run_path);
+        let out = crate::report::ensure_run_out_dir("USDC", &run_id).unwrap();
+        seed_transfer_audit_run(&out, &run_id);
+        run("USDC", &run_id).unwrap();
+        let m = crate::artifact::load_artifact_manifest(&out).unwrap();
+        assert_eq!(m.command, "transfer-audit");
+        assert_eq!(
+            m.artifacts
+                .iter()
+                .filter(|a| a.path.starts_with("cross_chain_summary"))
+                .count(),
+            2
+        );
+        let cc_steps: Vec<_> = m
+            .workflow_steps
+            .iter()
+            .filter(|s| s.command == "cross-chain-summary")
+            .collect();
+        assert_eq!(cc_steps.len(), 1);
+        run("USDC", &run_id).unwrap();
+        let m2 = crate::artifact::load_artifact_manifest(&out).unwrap();
+        assert_eq!(
+            m2.artifacts
+                .iter()
+                .filter(|a| a.path.starts_with("cross_chain_summary"))
+                .count(),
+            2
+        );
+        let _ = std::fs::remove_dir_all(&out);
+    }
+
+    #[cfg(feature = "api")]
+    #[tokio::test]
+    async fn api_lists_cross_chain_artifacts_after_run() {
+        use std::collections::HashSet;
+
+        use axum::body::Body;
+        use axum::http::{Request, StatusCode};
+        use tower::ServiceExt;
+
+        use crate::api::{router, ArtifactStore};
+        use crate::report::ensure_run_out_dir;
+
+        let run_id = format!(
+            "cc_api_{}_{}",
+            std::process::id(),
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap()
+                .as_nanos()
+        );
+        let run_path = std::path::Path::new("out")
+            .join("usdc")
+            .join("runs")
+            .join(&run_id);
+        remove_run_path_if_present(&run_path);
+        let out = ensure_run_out_dir("USDC", &run_id).unwrap();
+        seed_transfer_audit_run(&out, &run_id);
+        run("USDC", &run_id).unwrap();
+
+        let store = ArtifactStore::open("out").unwrap();
+        let listed: HashSet<String> = store
+            .list_runs()
+            .unwrap()
+            .into_iter()
+            .map(|r| r.run_id)
+            .collect();
+        assert!(listed.contains(&run_id));
+
+        let app = router(store);
+        let uri = format!("/api/runs/{run_id}/artifacts?asset=USDC");
+        let response = app
+            .oneshot(Request::get(&uri).body(Body::empty()).unwrap())
+            .await
+            .unwrap();
+        assert_eq!(response.status(), StatusCode::OK);
+        let body = axum::body::to_bytes(response.into_body(), usize::MAX)
+            .await
+            .unwrap();
+        let v: serde_json::Value = serde_json::from_slice(&body).unwrap();
+        let paths: Vec<String> = v["artifacts"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .map(|a| a["path"].as_str().unwrap().to_string())
+            .collect();
+        assert!(paths
+            .iter()
+            .any(|p| p.ends_with("cross_chain_summary.json")));
+        assert!(paths.iter().any(|p| p.ends_with("cross_chain_summary.md")));
+        let _ = std::fs::remove_dir_all(&out);
     }
 }
