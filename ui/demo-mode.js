@@ -24,7 +24,7 @@
 
   function parseAssetQuery(path) {
     const q = path.indexOf("?");
-    if (q < 0) return {};
+    if (q < 0) return { asset: null, pathOnly: path };
     const params = new URLSearchParams(path.slice(q));
     return { asset: params.get("asset"), pathOnly: path.slice(0, q) };
   }
