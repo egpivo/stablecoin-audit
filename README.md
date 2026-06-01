@@ -94,3 +94,15 @@ Generated map-package outputs land in `data/benchmarks/`: `global_stablecoin_inv
 ## Product architecture (toolkit, not dashboard)
 
 This repo is a **reproducible evidence toolkit** (Rust CLI + filesystem artifacts), not a hosted risk dashboard. Layered design and roadmap: [`docs/product/backend_architecture_v0.md`](docs/product/backend_architecture_v0.md). Manifest schema: [`docs/product/artifact_manifest_schema_v0.md`](docs/product/artifact_manifest_schema_v0.md). Read-only evidence API (v0.3 skeleton): `cargo run --features api -- serve --artifact-root out/`.
+
+## Evidence browser
+
+Minimal local UI for inspecting completed runs — claim boundaries, artifacts, and package actions. Served by the API at `/ui/`; no separate frontend build.
+
+```bash
+# After at least one successful transfer-audit run under out/
+cargo run --features api -- serve --artifact-root out/
+open http://127.0.0.1:8080/ui/
+```
+
+Details: [`docs/product/evidence_browser_v0.md`](docs/product/evidence_browser_v0.md).

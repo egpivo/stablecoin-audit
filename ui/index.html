@@ -1,0 +1,94 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Stablecoin Audit — Evidence Browser</title>
+  <link rel="stylesheet" href="style.css">
+</head>
+<body>
+  <header class="site-header">
+    <div class="header-inner">
+      <h1>Stablecoin Audit Evidence Browser</h1>
+      <p class="tagline">Read-only inspection of completed audit runs</p>
+    </div>
+    <aside class="demo-note" role="note">
+      This browser displays generated audit evidence. It does not claim reserve adequacy, peg stability,
+      redemption capacity, user geography, issuer intent, or actual swap routing.
+    </aside>
+  </header>
+
+  <div class="layout">
+    <nav class="run-list-panel" aria-label="Audit runs">
+      <h2>Runs</h2>
+      <div id="run-list-status" class="panel-status">Loading runs…</div>
+      <ul id="run-list" class="run-list"></ul>
+    </nav>
+
+    <main id="run-detail" class="run-detail" hidden>
+      <section class="panel" id="overview-panel">
+        <h2>Run overview</h2>
+        <div id="overview-content"></div>
+      </section>
+
+      <section class="panel claims-panel" id="claims-panel">
+        <h2>Claim boundaries</h2>
+        <p class="claims-intro">What this toolkit attests — and what it explicitly does not.</p>
+        <div class="claims-grid">
+          <div class="claims-column supported">
+            <h3>Supported / conditional</h3>
+            <div id="supported-claims"></div>
+          </div>
+          <div class="claims-column unsupported">
+            <h3>Unsupported (out of scope)</h3>
+            <div id="unsupported-claims"></div>
+          </div>
+        </div>
+      </section>
+
+      <section class="panel" id="artifacts-panel">
+        <h2>Artifacts</h2>
+        <div id="artifacts-status" class="panel-status"></div>
+        <div class="table-wrap">
+          <table id="artifacts-table">
+            <thead>
+              <tr>
+                <th>Kind</th>
+                <th>Path</th>
+                <th>Format</th>
+                <th>Rows</th>
+                <th>Description</th>
+                <th></th>
+              </tr>
+            </thead>
+            <tbody id="artifacts-body"></tbody>
+          </table>
+        </div>
+      </section>
+
+      <section class="panel" id="package-panel">
+        <h2>Evidence package</h2>
+        <div id="package-content">
+          <p class="panel-status">Select a run to inspect package options.</p>
+        </div>
+        <div class="package-actions">
+          <button type="button" id="btn-build-package" disabled>Build package</button>
+          <button type="button" id="btn-download-package" disabled>Download zip</button>
+          <button type="button" id="btn-verify-package" disabled>Verify package</button>
+        </div>
+        <pre id="package-result" class="package-result" hidden></pre>
+      </section>
+    </main>
+
+    <main id="empty-state" class="empty-state">
+      <p>Select a run from the list, or start the API with completed runs under <code>out/</code>.</p>
+    </main>
+  </div>
+
+  <footer class="site-footer">
+    <span id="health-status">Checking API…</span>
+  </footer>
+
+  <script src="app.js" type="module"></script>
+</body>
+</html>

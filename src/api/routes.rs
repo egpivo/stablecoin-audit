@@ -1,11 +1,13 @@
+use std::path::PathBuf;
 use std::sync::Arc;
 
 use axum::extract::{Path, Query, State};
 use axum::http::{header, StatusCode};
-use axum::response::IntoResponse;
+use axum::response::{IntoResponse, Redirect};
 use axum::routing::{get, post};
 use axum::{Json, Router};
 use serde::Deserialize;
+use tower_http::services::ServeDir;
 
 use crate::artifact::{ArtifactManifest, PackageManifest, PackageVerificationReport};
 
@@ -25,10 +27,15 @@ pub struct AssetQuery {
     pub asset: Option<String>,
 }
 
+fn ui_dir() -> PathBuf {
+    PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("ui")
+}
+
 pub fn router(store: ArtifactStore) -> Router {
     let state = AppState {
         store: Arc::new(store),
     };
+    let ui = ServeDir::new(ui_dir()).append_index_html_on_directories(true);
     Router::new()
         .route("/health", get(health))
         .route("/api/runs", get(list_runs))
@@ -41,6 +48,8 @@ pub fn router(store: ArtifactStore) -> Router {
         .route("/api/runs/:run_id/package/download", get(download_package))
         .route("/api/runs/:run_id/package/verify", post(verify_package))
         .route("/api/artifacts/*artifact_path", get(serve_artifact))
+        .route("/ui", get(|| async { Redirect::permanent("/ui/") }))
+        .nest_service("/ui/", ui)
         .with_state(state)
 }
 

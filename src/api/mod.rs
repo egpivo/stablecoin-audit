@@ -23,6 +23,7 @@ pub async fn serve(artifact_root: impl AsRef<Path>, host: &str, port: u16) -> an
         .await
         .with_context(|| format!("bind {addr}"))?;
     eprintln!("stablecoin-audit API listening on http://{addr}");
+    eprintln!("Evidence browser: http://{addr}/ui/");
     axum::serve(listener, app).await.context("HTTP server")?;
     Ok(())
 }
@@ -87,6 +88,21 @@ mod tests {
         let _ = std::fs::remove_dir_all(&root);
         seed_transfer_audit_run(&root, "test_run");
         ArtifactStore::open(&root).unwrap()
+    }
+
+    #[tokio::test]
+    async fn serves_evidence_browser_ui() {
+        let app = router(test_store());
+        let response = app
+            .oneshot(Request::get("/ui/").body(Body::empty()).unwrap())
+            .await
+            .unwrap();
+        assert_eq!(response.status(), StatusCode::OK);
+        let body = axum::body::to_bytes(response.into_body(), usize::MAX)
+            .await
+            .unwrap();
+        let html = String::from_utf8_lossy(&body);
+        assert!(html.contains("Evidence Browser"));
     }
 
     #[tokio::test]
