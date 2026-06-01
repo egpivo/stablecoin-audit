@@ -12,6 +12,7 @@ use tower_http::services::ServeDir;
 use crate::artifact::{ArtifactManifest, PackageManifest, PackageVerificationReport};
 
 use super::artifact_store::{ArtifactStore, RunArtifactsResponse, RunsResponse};
+use super::demo_cleanup::CleanHistoryResponse;
 use super::error::ApiError;
 use super::path_jail::{content_type_for_path, open_artifact_file};
 use super::run_jobs::{
@@ -55,6 +56,7 @@ pub fn router(store: ArtifactStore) -> Router {
         .route("/api/runs/:run_id/package/download", get(download_package))
         .route("/api/runs/:run_id/package/verify", post(verify_package))
         .route("/api/artifacts/*artifact_path", get(serve_artifact))
+        .route("/api/demo/clean-history", post(clean_demo_history))
         .route("/ui", get(|| async { Redirect::permanent("/ui/") }))
         .nest_service("/ui/", ui)
         .with_state(state)
@@ -180,6 +182,13 @@ async fn verify_package(
         .store
         .verify_package(&run_id, query.asset.as_deref())?;
     Ok(Json(report))
+}
+
+async fn clean_demo_history(
+    State(state): State<AppState>,
+) -> Result<Json<CleanHistoryResponse>, ApiError> {
+    let resp = state.store.clean_product_runs()?;
+    Ok(Json(resp))
 }
 
 async fn serve_artifact(

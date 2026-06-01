@@ -22,6 +22,12 @@ pub struct ExecutionLogEntry {
     pub timestamp: String,
     pub level: String,
     pub message: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub chain: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub event: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub stage: Option<String>,
 }
 
 #[derive(Clone)]
@@ -67,13 +73,32 @@ impl ExecutionLogWriter {
     }
 
     pub fn append(&self, level: &str, message: impl AsRef<str>) -> Result<()> {
+        self.emit(level, None, None, None, message)
+    }
+
+    /// Structured execution trace line for progress UI (`event` + `stage` drive the stepper).
+    pub fn emit(
+        &self,
+        level: &str,
+        event: Option<&str>,
+        stage: Option<&str>,
+        chain: Option<&str>,
+        message: impl AsRef<str>,
+    ) -> Result<()> {
         let entry = ExecutionLogEntry {
             schema: EXECUTION_LOG_SCHEMA.to_string(),
             timestamp: Utc::now().to_rfc3339(),
             level: level.to_string(),
             message: message.as_ref().to_string(),
+            chain: chain.map(str::to_string),
+            event: event.map(str::to_string),
+            stage: stage.map(str::to_string),
         };
-        let line = serde_json::to_string(&entry).context("serialize execution log entry")?;
+        self.write_entry(&entry)
+    }
+
+    fn write_entry(&self, entry: &ExecutionLogEntry) -> Result<()> {
+        let line = serde_json::to_string(entry).context("serialize execution log entry")?;
         let mut file = self
             .file
             .lock()
@@ -140,6 +165,27 @@ mod tests {
         assert!(!text.contains("first attempt"));
         assert!(text.contains("second attempt"));
 
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn emit_writes_structured_fields() {
+        let dir = std::env::temp_dir().join(format!("stablecoin_exec_emit_{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).unwrap();
+        let writer = ExecutionLogWriter::open(&dir, true).unwrap();
+        writer
+            .emit(
+                "info",
+                Some("chain_fetch_start"),
+                Some("fetching_logs"),
+                Some("ethereum"),
+                "fetching Transfer logs",
+            )
+            .unwrap();
+        let text = std::fs::read_to_string(dir.join(EXECUTION_LOG_FILENAME)).unwrap();
+        assert!(text.contains("\"event\":\"chain_fetch_start\""));
+        assert!(text.contains("\"stage\":\"fetching_logs\""));
         let _ = std::fs::remove_dir_all(&dir);
     }
 }

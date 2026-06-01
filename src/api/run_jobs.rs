@@ -365,7 +365,7 @@ async fn run_job(params: RunJobParams) {
     };
 
     let log = match ExecutionLogWriter::open(&out_dir, fresh) {
-        Ok(l) => l,
+        Ok(l) => Arc::new(l),
         Err(e) => {
             registry
                 .set(RunJobRecord {
@@ -381,8 +381,11 @@ async fn run_job(params: RunJobParams) {
         }
     };
 
-    let _ = log.append(
+    let _ = log.emit(
         "info",
+        Some("audit_start"),
+        Some("preparing"),
+        None,
         format!(
             "starting transfer-audit asset={asset} run_id={run_id} window={chain}:{from_block}:{to_block} fresh={fresh}"
         ),
@@ -395,15 +398,28 @@ async fn run_job(params: RunJobParams) {
         None,
         Some(run_id.clone()),
         fresh,
+        Some(log.clone()),
     )
     .await;
 
     match &result {
         Ok(()) => {
-            let _ = log.append("info", "transfer-audit completed successfully");
+            let _ = log.emit(
+                "info",
+                Some("audit_complete"),
+                Some("complete"),
+                None,
+                "transfer-audit completed successfully",
+            );
         }
         Err(e) => {
-            let _ = log.append("error", format!("transfer-audit failed: {e:#}"));
+            let _ = log.emit(
+                "error",
+                Some("audit_failed"),
+                Some("failed"),
+                None,
+                format!("transfer-audit failed: {e:#}"),
+            );
         }
     }
 
@@ -489,6 +505,9 @@ pub fn read_execution_log(run_dir: &Path) -> Result<RunLogsResponse, ApiError> {
                 timestamp: Utc::now().to_rfc3339(),
                 level: "raw".into(),
                 message: line.to_string(),
+                chain: None,
+                event: None,
+                stage: None,
             }),
         }
     }
@@ -523,6 +542,9 @@ pub async fn get_logs(
                     timestamp: job.finished_at.unwrap_or_else(|| Utc::now().to_rfc3339()),
                     level: "error".into(),
                     message: err,
+                    chain: None,
+                    event: None,
+                    stage: None,
                 });
             }
         }

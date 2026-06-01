@@ -1,12 +1,45 @@
-# Evidence browser (v0)
+# Evidence console (v0)
 
-Status: **minimal local browser** served by the read-only API at `/ui/`.
+Status: **developer-facing evidence console** served by the read-only API at `/ui/`.
 
 ## Purpose
 
-The evidence browser makes one completed audit run easy to inspect for demos and product review. It reads generated artifacts and manifests only — it does not run audits, call RPC, compute claims, or infer conclusions beyond what `artifact_manifest.json` lists.
+The evidence console makes one completed audit run understandable in under 30 seconds: what was audited, what evidence was generated, which claims are supported, what is explicitly out of scope, and how to verify artifacts.
 
-This is not a risk dashboard, reserve audit, peg scorer, or liquidity tool.
+It reads generated artifacts and `artifact_manifest.json` only. It does not run audits on its own (except optional local developer mode via `POST /api/runs`), call RPC from the browser, compute claims, or show risk scores.
+
+This is not a trading dashboard, DeFi analytics UI, reserve audit, peg scorecard, or generic blockchain explorer.
+
+## What changed (v0 redesign)
+
+| Before | After |
+|--------|--------|
+| Artifact-heavy inspector layout | **Run header + metric cards**; **Overview** tab for 30-second scan |
+| Request builder squeezed into sidebar | **Modal** triggered by **New local audit** (header + empty states) |
+| Long vertical stack | **Tabs:** Overview · Claims · Logs · Artifacts · Package |
+| Sidebar overloaded | **Runs-only sidebar** with filter and status pills |
+| Long unsupported claim list | **Grouped out-of-scope** categories on Claims tab |
+| Large disclaimer banners | Short info line + compact scope note |
+| Raw JSON prominent | Collapsed package JSON; artifact table with filters |
+
+## Design source (Figma)
+
+- **Main mockup:** [Stablecoin Audit Evidence Console v0](https://www.figma.com/design/3D2mB6WpBaXt6nODIbDCOc/Stablecoin-Audit-Evidence-Console-v0?node-id=1-2)
+- **Architecture diagram (FigJam):** [Stablecoin audit pipeline](https://www.figma.com/board/cfflnhHAXwXpCLHeOW058V/Stablecoin-audit-pipeline)
+
+## Screenshots
+
+Committed product diagram: [`screenshots/architecture_pipeline.svg`](screenshots/architecture_pipeline.svg).
+
+UI captures and article figures (including GIFs) live under **`.local/blog/figures/`** (gitignored; not in pre-commit). Regenerate with `.local/blog/scripts/capture_product_demo.py` after a completed run.
+
+Recapture live UI after a completed run:
+
+```bash
+cargo run --features api -- serve --artifact-root out/
+open http://127.0.0.1:8080/ui/
+# Select a run; screenshot the main console pane
+```
 
 ## Architecture
 
@@ -15,115 +48,64 @@ Rust CLI (transfer-audit, cross-chain-summary)
     → filesystem artifacts under out/<asset>/runs/<run_id>/
     → artifact_manifest.json (product contract)
     → read-only Axum API (--features api)
-    → static evidence browser at /ui/
+    → static evidence console at /ui/
 ```
 
-The browser is vanilla HTML/CSS/JavaScript under `ui/`. No build step. The API serves those files with `tower-http` `ServeDir` from the repo root at compile time (`CARGO_MANIFEST_DIR/ui`).
+Implementation: vanilla HTML/CSS/JavaScript under `ui/`. No build step. `tower-http` `ServeDir` from `CARGO_MANIFEST_DIR/ui`.
+
+## UI hierarchy
+
+1. **Left sidebar — Runs** — filter, asset, run_id, status pill, chain count, timestamp; local audit request at bottom.
+2. **Audit summary** — PASS/WARN/FAIL, asset/run, chain window, transfer rows, supply snapshots, reconciliation, package status.
+3. **Claim boundaries + execution log** — supported claims; out-of-scope grouped (off-chain, market/liquidity, identity/geography, bridge/routing/stress); terminal-style log with PASS/WARN/FAIL highlighting.
+4. **Evidence package** — artifact count, checksum, build / download / verify; collapsed package JSON.
+5. **Raw artifacts** — collapsed table with download links.
 
 ## API endpoints used
 
 | Method | Path | Panel |
 |--------|------|-------|
-| `GET` | `/health` | Footer status |
+| `GET` | `/health` | Footer |
 | `GET` | `/api/runs` | Run list |
-| `GET` | `/api/runs/{run_id}/manifest?asset=` | Run overview, claim boundaries |
-| `GET` | `/api/runs/{run_id}/artifacts?asset=` | Artifact table |
-| `GET` | `/api/artifacts/{path}` | Artifact download links |
-| `GET` | `/api/runs/{run_id}/package?asset=` | Package info (if built) |
+| `GET` | `/api/runs/{run_id}/manifest?asset=` | Summary, claims |
+| `GET` | `/api/runs/{run_id}/artifacts?asset=` | Artifact table, QA fetch |
+| `GET` | `/api/artifacts/{path}` | Downloads, `qa_report.json`, `execution_log.ndjson` |
+| `GET` | `/api/runs/{run_id}/package?asset=` | Package panel |
 | `POST` | `/api/runs/{run_id}/package?asset=` | Build package |
 | `GET` | `/api/runs/{run_id}/package/download?asset=` | Download zip |
-| `POST` | `/api/runs/{run_id}/package/verify?asset=` | Verify checksums |
+| `POST` | `/api/runs/{run_id}/package/verify?asset=` | Verify |
+| `POST` | `/api/runs` | Local run (developer mode) |
+| `GET` | `/api/runs/{run_id}/status?asset=` | Local run polling |
+| `GET` | `/api/runs/{run_id}/logs?asset=` | Local run polling |
 
-All run-scoped routes pass `?asset=` when the run descriptor includes an asset (required when the same `run_id` exists under multiple asset directories).
+## What the UI does not claim
 
-## What the browser shows
+Reserve adequacy, peg stability, redemption capacity, user geography, issuer intent, actual swap routing, or any metric not present in listed artifacts.
 
-1. **Run list** — asset, run_id, command, generated_at from `/api/runs`.
-2. **Run overview** — asset, run_id, command, toolkit version, inputs, workflow steps, source snapshots / windows, manifest warnings.
-3. **Claim boundaries** — supported/conditional claims and unsupported (out-of-scope) claims from the manifest. Visually prominent two-column layout.
-4. **Artifact table** — kind, path, format, row_count, description; download via `/api/artifacts/{path}`.
-5. **Package panel** — build, download, verify buttons when package endpoints are available; shows package metadata when already built.
-6. **Demo note** — fixed banner stating what the browser does not claim.
-
-## What it does not show
-
-- Reserve adequacy, peg stability, redemption capacity, user geography, issuer intent, or actual swap routing (also stated in the UI banner).
-- Live RPC or job orchestration.
-- Charts, scores, or derived risk metrics.
-- Files on disk that are not listed in `artifact_manifest.json`.
-- Runs without a valid `artifact_manifest.json`.
-
-## Audit request builder and local runner
-
-The browser includes an **Audit request builder** (always visible, even when no runs exist):
-
-- Build a reproducible `transfer-audit` CLI command (copy to terminal).
-- **Run audit locally** — `POST /api/runs` on the same API server (developer mode). Polls `/status` and `/logs`, then refreshes the run list when complete.
-- Requires RPC env vars (`.env`) on the machine running `cargo run --features api -- serve`.
-
-Execution trace: `out/<asset>/runs/<run_id>/execution_log.ndjson` (listed in `artifact_manifest.json` when present).
-
-## Run instructions
-
-### 1. Produce a completed run (if needed)
+## Run locally
 
 ```bash
+# Produce a run (if needed)
 cargo run -- transfer-audit --asset USDC --run-id demo_001 \
   --window ethereum:24000000:24001000
-```
 
-Successful runs write `out/<asset>/runs/<run_id>/artifact_manifest.json`.
-
-Optional: add cross-chain summary and build a package from the CLI or browser.
-
-### 2. Start the API + browser
-
-```bash
+# Serve API + console
 cargo run --features api -- serve --artifact-root out/
+open http://127.0.0.1:8080/ui/
 ```
 
-Open:
-
-```text
-http://127.0.0.1:8080/ui/
-```
-
-The server logs the browser URL on startup.
-
-### 3. Verify
-
-- Run list populates from `/api/runs`.
-- Selecting a run loads manifest and artifacts.
-- Claim boundaries render supported and unsupported sections.
-- At least one artifact download link returns file bytes.
-
-## Screenshots
-
-Capture after starting the server with at least one completed run:
-
-| File | Description |
-|------|-------------|
-| `docs/product/screenshots/evidence_browser_run_list.png` | Run list + overview (placeholder — capture locally) |
-| `docs/product/screenshots/evidence_browser_claims.png` | Claim boundaries panel (placeholder — capture locally) |
-
-To capture:
-
-```bash
-cargo run --features api -- serve --artifact-root out/
-# open http://127.0.0.1:8080/ui/ and screenshot each panel
-```
+Local **Run audit locally** requires RPC env (`.env`) on the machine running the API.
 
 ## Known limitations
 
-- **Manifest required** — Legacy benchmark dirs under `docs/benchmarks/` without `artifact_manifest.json` do not appear in the run list.
-- **Same-origin only** — UI is served from the API; no separate dev server or CORS layer. Running UI files directly from disk will fail API calls.
-- **No auth** — Local loopback demo only; not hardened for production exposure.
-- **No charts** — Tabular and textual evidence only; no server-side chart generation.
-- **Package build is synchronous** — Large runs may take noticeable time on POST package.
-- **Single artifact root** — One `--artifact-root` per server process.
+- **Manifest required** — runs without `artifact_manifest.json` do not appear in the list.
+- **Same-origin** — open via the API URL, not `file://`.
+- **No auth** — loopback demo only.
+- **Run list status** — derived from `qa_report.json` when present (extra GET per run on load).
+- **No charts** — tabular/textual evidence only.
 
 ## Related docs
 
-- API design: [`api_design_v0.md`](api_design_v0.md)
-- Manifest schema: [`artifact_manifest_schema_v0.md`](artifact_manifest_schema_v0.md)
-- Article notes: [`article_notes_stablecoin_audit_toolkit.md`](article_notes_stablecoin_audit_toolkit.md)
+- [`api_design_v0.md`](api_design_v0.md)
+- [`artifact_manifest_schema_v0.md`](artifact_manifest_schema_v0.md)
+- [`article_notes_stablecoin_audit_toolkit.md`](article_notes_stablecoin_audit_toolkit.md)

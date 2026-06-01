@@ -32,6 +32,10 @@ Product (API, package, UI) → Artifact (manifest, files) → Claim (supported_c
 
 Detailed current-vs-target pipeline diagrams: [`audit_product_pipeline_v0.md`](audit_product_pipeline_v0.md).
 
+![v0 product stack](screenshots/architecture_pipeline.svg)
+
+*Evidence browser → read-only API → `artifact_manifest.json` → CLI workflows → Rust core. Blog-scale horizontal diagrams: `.local/blog/figures/`.*
+
 ```text
 ┌─────────────────────────────────────────────────────────────┐
 │  Evidence browser (/ui/) — read-only, served by API          │
@@ -41,9 +45,12 @@ Detailed current-vs-target pipeline diagrams: [`audit_product_pipeline_v0.md`](a
 ┌───────────────────────────────▼─────────────────────────────┐
 │  Thin API (v0.3) — axum, artifact_root jail                  │
 │  Runs, manifests, artifacts, package build/verify/download   │
-│  No POST /api/runs orchestration (roadmap v0.4)               │
 └───────────────────────────────┬─────────────────────────────┘
                                 │ reads filesystem only
+┌───────────────────────────────▼─────────────────────────────┐
+│  artifact_manifest.json — product contract (claims, checksums) │
+└───────────────────────────────┬─────────────────────────────┘
+                                │
 ┌───────────────────────────────▼─────────────────────────────┐
 │  CLI — transfer-audit, cross-chain-summary, …                │
 │  Writes out/<asset>/runs/<run_id>/ + artifact_manifest.json  │

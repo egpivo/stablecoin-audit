@@ -14,7 +14,7 @@ use std::str::FromStr;
 use crate::artifact::{
     ensure_audit_plan,
     transfer_audit_manifest::{ManifestChainInput, TransferAuditManifestParams},
-    write_transfer_audit_manifest,
+    write_transfer_audit_manifest, ExecutionLogWriter,
 };
 use crate::audit::supply::build_supply_metrics_from_events;
 use crate::audit::{write_canonical_audit_tables, CanonicalWriteParams};
@@ -27,6 +27,20 @@ use crate::rpc::transfer_checkpoint::{
 };
 use crate::rpc::{build_provider, HttpProvider};
 use std::path::Path;
+use std::sync::Arc;
+
+fn exec_emit(
+    log: Option<&ExecutionLogWriter>,
+    level: &str,
+    event: &str,
+    stage: &str,
+    chain: Option<&str>,
+    message: impl AsRef<str>,
+) {
+    if let Some(w) = log {
+        let _ = w.emit(level, Some(event), Some(stage), chain, message.as_ref());
+    }
+}
 
 const DEFAULT_CHUNK_SIZE: u64 = 500;
 const QA_SAMPLE_SIZE: usize = 100;
@@ -198,6 +212,7 @@ pub async fn run_per_chain_windows(
         chunk_size,
         run_id,
         fresh,
+        None,
     )
     .await
 }
@@ -210,6 +225,7 @@ pub async fn run_per_chain_windows_at(
     chunk_size: Option<u64>,
     run_id: Option<String>,
     fresh: bool,
+    exec_log: Option<Arc<ExecutionLogWriter>>,
 ) -> Result<()> {
     run_inner_at(
         artifact_root,
@@ -218,6 +234,7 @@ pub async fn run_per_chain_windows_at(
         chunk_size,
         run_id,
         fresh,
+        exec_log,
     )
     .await
 }
@@ -379,6 +396,7 @@ async fn run_inner(
         chunk_size,
         run_id,
         fresh,
+        None,
     )
     .await
 }
@@ -390,6 +408,7 @@ async fn run_inner_at(
     chunk_size: Option<u64>,
     run_id: Option<String>,
     fresh: bool,
+    exec_log: Option<Arc<ExecutionLogWriter>>,
 ) -> Result<()> {
     let chunk_size = chunk_size.unwrap_or(DEFAULT_CHUNK_SIZE);
     let run_id = match run_id {
@@ -401,6 +420,7 @@ async fn run_inner_at(
     };
     let out_dir = ensure_run_out_dir_at(artifact_root, asset, &run_id)?;
     let plan = build_run_plan(mode)?;
+    let log_ref = exec_log.as_deref();
 
     if fresh {
         transfer_checkpoint::clear_checkpoint_dir(&out_dir)?;
@@ -480,6 +500,7 @@ async fn run_inner_at(
             &task.to_block_requested,
             &generated_at,
             &out_dir,
+            log_ref,
         )
         .await;
 
@@ -529,6 +550,15 @@ async fn run_inner_at(
     );
     ensure_audit_plan(&out_dir, &manifest_params)?;
 
+    exec_emit(
+        log_ref,
+        "info",
+        "artifacts_written",
+        "writing_artifacts",
+        None,
+        "writing run artifacts (CSV, QA report, provenance)",
+    );
+
     write_run_artifacts(
         &out_dir,
         asset,
@@ -566,6 +596,14 @@ async fn run_inner_at(
     println!("Checkpoint cleared.");
 
     write_transfer_audit_manifest(&out_dir, &manifest_params)?;
+    exec_emit(
+        log_ref,
+        "info",
+        "manifest_written",
+        "writing_manifest",
+        None,
+        "artifact_manifest.json written",
+    );
     crate::audit::validate_transfer_audit_product_run(&out_dir)?;
 
     println!("  artifact_manifest.json (product run complete — discoverable via API)");
@@ -873,6 +911,7 @@ pub(crate) async fn process_chain(
     to_block_raw: &str,
     generated_at: &str,
     out_dir: &Path,
+    exec_log: Option<&ExecutionLogWriter>,
 ) -> (
     Vec<crate::decode::TransferEvent>,
     SupplyAuditRow,
@@ -1183,6 +1222,19 @@ pub(crate) async fn process_chain(
                     p.chunks_done,
                     p.total_chunks
                 );
+                exec_emit(
+                    exec_log,
+                    "info",
+                    "chain_fetch_start",
+                    "fetching_logs",
+                    Some(chain),
+                    format!(
+                        "resuming Transfer log fetch from block {} (chunk {}/{})",
+                        p.resume_from_block(),
+                        p.chunks_done,
+                        p.total_chunks
+                    ),
+                );
                 e
             }
             Err(e) => {
@@ -1199,6 +1251,16 @@ pub(crate) async fn process_chain(
             end_blk,
             chunk_size,
             total_chunks
+        );
+        exec_emit(
+            exec_log,
+            "info",
+            "chain_fetch_start",
+            "fetching_logs",
+            Some(chain),
+            format!(
+                "fetching Transfer logs block {from_block} → {end_blk} (chunk {chunk_size}, {total_chunks} chunks)"
+            ),
         );
         Vec::new()
     };
@@ -1239,6 +1301,7 @@ pub(crate) async fn process_chain(
         let chain_upper = chain.to_uppercase();
         let out_owned = out_dir.to_path_buf();
         let chain_owned = chain.to_string();
+        let log_fetch = exec_log.cloned();
 
         let fetch_result = fetch_transfer_logs_incremental(
             &provider,
@@ -1253,6 +1316,17 @@ pub(crate) async fn process_chain(
                     start,
                     end,
                     logs.len()
+                );
+                exec_emit(
+                    log_fetch.as_ref(),
+                    "info",
+                    "fetch_chunk_complete",
+                    "fetching_logs",
+                    Some(&chain_owned),
+                    format!(
+                        "fetch chunk {chunks_done}/{total_chunks} blocks {start}..{end} ({} logs)",
+                        logs.len()
+                    ),
                 );
 
                 if !qa_sample_done && !logs.is_empty() {
@@ -1342,6 +1416,17 @@ pub(crate) async fn process_chain(
         raw_count,
         events.len()
     );
+    exec_emit(
+        exec_log,
+        "info",
+        "decode_complete",
+        "decoding_dedup",
+        Some(chain),
+        format!(
+            "received {raw_count} raw logs ({} decoded rows before dedup)",
+            events.len()
+        ),
+    );
 
     if decode_errors > 5 {
         errors.push(format!("... and {} more decode errors", decode_errors - 5));
@@ -1376,12 +1461,40 @@ pub(crate) async fn process_chain(
         burn_count,
         plain_transfer_count,
     );
+    exec_emit(
+        exec_log,
+        "info",
+        "dedup_complete",
+        "decoding_dedup",
+        Some(chain),
+        format!(
+            "{raw_count} logs → {} unique (dup: {dup_count})",
+            deduped.len()
+        ),
+    );
     println!(
         "[{}] no_dup: {}  all_decode: {}  supply_invariant: {}",
         chain.to_uppercase(),
         gate(no_dup_pass),
         gate(all_decode_pass),
         inv_label,
+    );
+    let qa_level = match invariant_pass {
+        Some(true) => "pass",
+        Some(false) => "fail",
+        None => "warn",
+    };
+    exec_emit(
+        exec_log,
+        qa_level,
+        "qa_gate_result",
+        "checking_supply",
+        Some(chain),
+        format!(
+            "supply_invariant: {inv_label} (no_dup: {}, all_decode: {})",
+            gate(no_dup_pass),
+            gate(all_decode_pass)
+        ),
     );
     if let (Some(nm), Some(od), Some(disc)) = (net_mint_opt, onchain_delta_opt, discrepancy_opt) {
         println!(
@@ -1939,6 +2052,7 @@ mod tests {
             "200",
             "2026-01-01T00:00:00Z",
             &out,
+            None,
         )
         .await;
         assert!(hard);
@@ -1963,6 +2077,7 @@ mod tests {
             "200",
             "2026-01-01T00:00:00Z",
             &out,
+            None,
         )
         .await;
         assert!(hard);
@@ -1992,6 +2107,7 @@ mod tests {
             "24001000",
             "2026-01-01T00:00:00Z",
             &out,
+            None,
         )
         .await;
         assert!(hard);
@@ -2135,6 +2251,7 @@ mod tests {
             "24000100",
             "2026-01-01T00:00:00Z",
             &out,
+            None,
         )
         .await;
         assert!(!hard);

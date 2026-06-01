@@ -1,4 +1,5 @@
 pub mod artifact_store;
+pub mod demo_cleanup;
 pub mod error;
 pub mod path_jail;
 pub mod routes;
@@ -103,7 +104,14 @@ mod tests {
             .await
             .unwrap();
         let html = String::from_utf8_lossy(&body);
-        assert!(html.contains("Evidence Browser"));
+        assert!(html.contains("Stablecoin Audit"));
+        assert!(html.contains("Evidence Console"));
+        assert!(html.contains("view-landing"));
+        assert!(html.contains("Evidence Bundle"));
+        assert!(html.contains("Build bundle"));
+        assert!(html.contains("Advanced: show bundle manifest JSON"));
+        assert!(html.contains(">Evidence<"));
+        assert!(!html.contains(">Package<"));
     }
 
     #[tokio::test]
@@ -129,6 +137,28 @@ mod tests {
             .unwrap();
         let v: serde_json::Value = serde_json::from_slice(&body).unwrap();
         assert_eq!(v["runs"].as_array().unwrap().len(), 1);
+    }
+
+    #[tokio::test]
+    async fn clean_history_removes_manifest_runs() {
+        let store = test_store();
+        let app = router(store.clone());
+        let response = app
+            .oneshot(
+                Request::post("/api/demo/clean-history")
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(response.status(), StatusCode::OK);
+        let body = axum::body::to_bytes(response.into_body(), usize::MAX)
+            .await
+            .unwrap();
+        let v: serde_json::Value = serde_json::from_slice(&body).unwrap();
+        assert_eq!(v["removed_count"].as_u64(), Some(1));
+        let runs = store.list_runs().unwrap();
+        assert!(runs.is_empty());
     }
 
     #[tokio::test]
